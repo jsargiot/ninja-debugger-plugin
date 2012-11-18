@@ -1,0 +1,7 @@
+{
+  "url": "",
+  "version": "0.1",
+  "class": "Debugger",
+  "module": "debugger-plugin",
+  "authors": "Joaquin Sargiotto <joaquinsargiotto@gmail.com>"
+}
