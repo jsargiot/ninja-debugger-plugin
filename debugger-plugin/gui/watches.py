@@ -8,6 +8,7 @@ from PyQt4.QtCore import SIGNAL
 from PyQt4.QtCore import pyqtSignal
 from PyQt4.QtCore import Qt
 from PyQt4.QtGui import QWidget
+from PyQt4.QtGui import QIcon
 from PyQt4.QtGui import QTreeWidget
 from PyQt4.QtGui import QTreeWidgetItem
 from PyQt4.QtGui import QTreeWidgetItemIterator
@@ -16,6 +17,8 @@ from PyQt4.QtGui import QVBoxLayout
 from PyQt4.QtGui import QHBoxLayout
 
 import resources
+
+import ninja_ide
 
 
 class WatchesIterator(QTreeWidgetItemIterator):
@@ -116,6 +119,7 @@ class WatchesWidget(QWidget):
         try:
             self.tree_widget.blockSignals(True)
             newitem = self.add_item("Value_Here", flags=Qt.ItemIsEditable)
+            newitem.setIcon(0, QIcon(ninja_ide.resources.IMAGES['attribute']))
             # Start editting it
             self.tree_widget.editItem(newitem, 0)
             # Add it to the list of watches
