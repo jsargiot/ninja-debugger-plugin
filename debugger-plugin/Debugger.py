@@ -24,6 +24,7 @@ from PyQt4.QtGui import QTextBlockFormat
 from ndb import DebuggerMaster
 from gui import resources
 from gui import watches
+import symbols
 
 
 class Debugger(plugin.Plugin):
@@ -42,6 +43,7 @@ class Debugger(plugin.Plugin):
         self.toolbar = self.locator.get_service('toolbar')
         self.menuApp = self.locator.get_service('menuApp')
         self.misc = self.locator.get_service('misc')
+
         self.toolbar_btns = {}
         self.debugger = DebuggerMaster()
         self.prev_cursor = None
@@ -228,6 +230,45 @@ class Debugger(plugin.Plugin):
                         'type': exc_type, 'msg': exc_value, 'line': line}
         QToolTip.showText(QPoint(250, 250), message)
 
+    def __install_mouse_handler(self):
+        '''
+        Installs a new mouse event handler for the ninja-ide. The new handler
+        observers the position and evaluates any symbol under the mouse cursor
+        and show its value. Doesn't remove old behavior, it just execute it
+        after the custom handler is done.
+        '''
+        filepath = self.editor.get_editor_path()
+        editor_widget = self.editor.get_editor()
+        self.sym_finder = dict()
+        self.sym_finder[filepath] = symbols.SymbolFinder(filepath)
+
+        # Save old mouse event
+        self.__old_mouse_event = editor_widget.mouseMoveEvent
+        # New custom mouse handler
+        def custom_mouse_movement(event):
+            try:
+                pos = event.pos()
+                c = editor_widget.cursorForPosition(pos)
+                sym = self.sym_finder[filepath].get(c.blockNumber()+1,
+                                                    c.columnNumber())
+                if sym is not None:
+                    result = self.debugger.debug_eval(sym.expression)
+                    content = "{exp} = ({type}) {value}".format(
+                                    exp=sym.expression, type=result['type'],
+                                    value=result['repr'])
+                    QToolTip.showText(editor_widget.mapToGlobal(pos), content)
+            finally:
+                self.__old_mouse_event(event)
+        # Install new event handler
+        self.editor.get_editor().mouseMoveEvent = custom_mouse_movement
+
+    def __uninstall_mouse_handler(self):
+        '''
+        Removes the custom mouse event handler from the ninja-ide. Restores
+        the mouse event handler to its previous state.
+        '''
+        self.editor.get_editor().mouseMoveEvent = self.__old_mouse_event
+
     def debug_start(self):
         '''
         Starts the debugging session.
@@ -263,6 +304,9 @@ class Debugger(plugin.Plugin):
         # Start monitoring of events
         self.__start_monitor()
 
+        # Install custom mouse handler for debug session
+        self.__install_mouse_handler()
+
     def debug_stop(self):
         '''
         Stops the debugger and ends the debugging session.
@@ -275,6 +319,9 @@ class Debugger(plugin.Plugin):
 
         self.run_process.waitForFinished()
         self.__set_disabled_toolbar(True)
+
+        # Restore old mouse event handler
+        self.__uninstall_mouse_handler()
 
     def debug_over(self):
         '''
