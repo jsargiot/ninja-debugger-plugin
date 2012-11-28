@@ -31,9 +31,7 @@ class SymbolFinder:
         is found in the source. This method adds the symbol to the cache for
         latter retrieval.
         '''
-        if node.line not in self.symbols:
-            self.symbols[node.line] = []
-        self.symbols[node.line].append(node)
+        self.symbols.setdefault(node.line, []).append(node)
 
     def get(self, line, column):
         '''
@@ -58,11 +56,19 @@ class SymbolNode:
 
     def __init__(self, expression, line, column):
         '''
+        Initializes a SymbolNode
         '''
-        self. expression = expression
+        self.expression = expression
         self.size = len(self.expression)
         self.line = line
         self.column = column
+
+    def __repr__(self):
+        '''
+        Returns the string representation of this SymbolNode
+        '''
+        return "SymbolNode(expression={0}, line={1}, column={2})".format(
+                    repr(self.expression), repr(self.line), repr(self.column))
 
 
 class ProcessorNodeVisitor(ast.NodeVisitor):
@@ -94,22 +100,8 @@ class ProcessorNodeVisitor(ast.NodeVisitor):
 
 
 if __name__ == "__main__":
-    symbols = dict()
-
-    fp = open(__file__)
-    source_code = fp.read()
-    fp.close()
-
-    module = ast.parse(source_code)
-    processor = ProcessorNodeVisitor()
-
-    def addNode(node):
-        if node.line not in symbols:
-            symbols[node.line] = []
-        symbols[node.line].append((node.expression, node.column, node.size))
-
-    processor.register(addNode)
-    processor.visit(module)
+    # Test SymbolFinder
+    sym_finder = SymbolFinder(__file__)
 
     import pprint
-    pprint.pprint(symbols)
+    pprint.pprint(sym_finder.symbols)
