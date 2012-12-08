@@ -6,6 +6,7 @@
 
 import os
 import time
+import logging
 
 from ninja_ide.core import plugin
 from ninja_ide.core import settings
@@ -25,6 +26,8 @@ from ndb import DebuggerMaster
 from gui import resources
 from gui import watches
 import symbols
+
+_logger = logging.getLogger("ninja_debugger")
 
 
 class Debugger(plugin.Plugin):
@@ -48,6 +51,8 @@ class Debugger(plugin.Plugin):
         self.debugger = DebuggerMaster()
         self.prev_cursor = None
         self.__prepare_ui()
+
+        _logger.info("Debugger plugin successfully initialized")
 
     def __prepare_ui(self):
         '''
@@ -124,6 +129,8 @@ class Debugger(plugin.Plugin):
         item_text = str(item.text(0))
         item_value = str(item.text(2))
 
+        _logger.debug("Evaluate item: ({0}; {1})".format(item_text, item_value))
+
         if (item_text == ""):
             self.watches_widget.remove_item(item)
             return
@@ -169,6 +176,8 @@ class Debugger(plugin.Plugin):
         '''
         Method to process events from the EventWatcher.
         '''
+        _logger.debug("Processing event: ({0})".format(repr(event)))
+
         if 'file' in event and 'line' in event:
             self.__step_on_line(event['file'], event['line'])
 
@@ -218,7 +227,6 @@ class Debugger(plugin.Plugin):
 
         # Re-evaluate all items
         item_list = self.watches_widget.get_all_items()
-        self.logger.error(repr(item_list))
         for item in item_list:
             self.__evaluate_item(item, 0)
 
@@ -273,12 +281,15 @@ class Debugger(plugin.Plugin):
         '''
         Starts the debugging session.
         '''
+        _logger.info("Starting debug session")
+
         filepath = self.editor.get_editor_path()
         interpreter = settings.PYTHON_PATH
         debugger_py = os.path.join(os.path.dirname(__file__), 'ndb.py')
 
         self.run_process = QProcess()
-        self.connect(self.run_process, SIGNAL("readyReadStandardOutput()"), self.__refresh_output)
+        self.connect(self.run_process, SIGNAL("readyReadStandardOutput()"),
+                self.__refresh_output)
 
         # Create process call by adding -u to the arg list to avoid
         # readyReadStandardOutput singal only being emitted on process end.
@@ -287,7 +298,8 @@ class Debugger(plugin.Plugin):
             return False
 
         if not self.debugger.connect(attemps=3):
-            QMessageBox.information(self.editor.get_editor(), "Error when starting debugger",
+            QMessageBox.information(self.editor.get_editor(),
+                    "Error when starting debugger",
                     "The debugger could not be started")
             return
 
@@ -299,6 +311,7 @@ class Debugger(plugin.Plugin):
             for l in ls:
                 # Add one to line number since the editor's line index starts
                 # at zero(0), while the debugger's index starts at one(1).
+                _logger.debug("Adding breakpoint {0}:{1}".format(b, l))
                 self.debugger.set_break(b, l + 1)
 
         # Start monitoring of events
@@ -322,6 +335,8 @@ class Debugger(plugin.Plugin):
 
         # Restore old mouse event handler
         self.__uninstall_mouse_handler()
+
+        _logger.info("Ending debug session")
 
     def debug_over(self):
         '''
@@ -352,7 +367,7 @@ class Debugger(plugin.Plugin):
         Shuts down the plugin and the debugger client.
         '''
         # Stop plugin
-        self.ui.debug_stop()
+        self.debugger.debug_stop()
 
 
 class EventWatcher(QThread):
@@ -376,11 +391,13 @@ class EventWatcher(QThread):
         Starts the cycle of checking for events from the debugger. Every time
         a new event is found, the newEvent signal is emitted.
         '''
+        _logger.info("Starting event watcher")
         self.__state = "running"
         while self.__state == "running":
             # If the next call raises an exception, do I really want to go on?
             events = self.debugger.get_events()
             for e in events:
+                _logger.debug("New Event: {0}".format(repr(e)))
                 self.newEvent.emit(e)
             time.sleep(resources.EVENT_RESPONSE_TIME)
         # Done with the loop
@@ -390,4 +407,5 @@ class EventWatcher(QThread):
         '''
         Ends the cycle of polling the debugger for events.
         '''
+        _logger.info("Stopping event watcher")
         self.__state = "stopping"

@@ -13,7 +13,10 @@ import socket
 import threading
 import types
 import xmlrpclib
+import logging
 import Queue
+
+logger = logging.getLogger("ninja_debugger")
 
 try:
     from SimpleXMLRPCServer import SimpleXMLRPCServer
@@ -193,6 +196,7 @@ class Debugger(bdb.Bdb, threading.Thread):
         sys.path.insert(0, os.path.dirname(self.inifile))
         # Create statement to execute
         statement = "execfile(\"%s\")" % (self.inifile)
+        
         # Start debugger
         bdb.Bdb.run(self, statement, scope)
         # We're done
