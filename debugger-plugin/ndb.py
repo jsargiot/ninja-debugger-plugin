@@ -23,6 +23,7 @@ logger = logging.getLogger("ninja_debugger")
 
 # List of files that shouldn't be traced
 _IGNORE_FILES = ['threading.py', 'process.py', 'ndb.py']
+_DEBUGGER_VERSION = "0.2"
 
 
 try:
@@ -160,7 +161,7 @@ class DebuggerInteractor(threading.Thread):
         self._quit = True
 
     def ping(self):
-        return "pong"
+        return _DEBUGGER_VERSION
     
     def do_continue(self, t_id):
         t = self._debugger.get_thread(t_id)
