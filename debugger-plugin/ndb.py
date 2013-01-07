@@ -36,46 +36,130 @@ CMD_STEP_INTO = "Into"
 CMD_STEP_OUT = "Out"
 
 
-class DebugEvent:
+"""
+
+INTERACTIONS
+
+Operation               Workflow                Description
+=========               ========                ===========
+ping                    User -> Debugger        Returns the debugger version.
+
+start                   User -> Debugger        Begins debugging execution.
+
+stop                    User -> Debugger        Stops debugging execution.
+
+list_threads            User -> Debugger        Returns the list of threads
+                                                currently executing.
+thread_started          Debugger -> User        Notifies about a new thread.
+
+thread_ended            Debugger -> User        Notifies about a thread's end.
+
+thread_suspended        Debugger -> User        Notifies that a thread has
+                                                being stopped at a point.
+
+resume                  User -> Debugger        Resumes execution of a stopped
+                                                thread.
+
+step_over               User -> Debugger        Steps over next statement.
+
+step_into               User -> Debugger        Steps into next statement.
+
+step_out                User -> Debugger        Steps out of current block of
+                                                statements and to the outer 
+                                                frame.
+
+get_stack               User -> Debugger        Returns the stack trace for a
+                                                particular thread.
+
+set_breakpoint          User -> Debugger        Sets a stopping point.
+
+evaluate                User -> Debugger        Returns the value of the
+                                                expression when evaluated in
+                                                the context of the specified
+                                                thread.
+
+get_messages            User -> Debugger        Returns the available messages
+                                                from the debugger.
+
+
+Workflow Example:
+
+
+User Code               Debugger (ndb.py)
+---------               -----------------
+(executes debugger)
+
+ping            ->      {version}
+
+set_breakpoint  ->      'OK'
+
+start           ->      'OK'
+
+get_messages    ->      [ {msg1}, {msg2}, ...]
+                        (threads created, suspended, ended, etc)
+
+step_*          ->      {tid}
+
+evaluate        ->      {evaluation result}
+
+resume          ->      {tid}
+
+get_messages    ->      [ {msg9}, {msg10}, ...]
+                        (threads created, suspended, ended, etc)
+
+resume_all      ->      'OK'
+
+stop            ->      'OK'
+
+
+"""
+
+class DebugMessageFactory:
+
+    MSG_NOP = 0x01
+    MSG_THREAD_STARTED = 0x02
+    MSG_THREAD_SUSPENDED = 0x03
+    MSG_THREAD_ENDED = 0x04
 
     def __init__(self):
-        pass
+        self._counter = 0
 
-    def execute(self, debugger):
-        pass
-
-
-class ThreadCreatedDebugEvent(DebugEvent):
-
-    def __init__(self, id):
-        self._id = id
-
-    def execute(self, debugger):
-        pass
-
-
-#class ThreadTerminatedDebugEvent(ThreadCreatedDebugEvent):
-#
-#    def execute(self, debugger):
-#        del debugger._threads[self._id]
-
-
-class DebuggerEventDispatcher(threading.Thread):
-
-    def __init__(self, debugger):
-        threading.Thread.__init__(self, name="DebuggerEventDispatcher")
-        self._debugger = debugger
-        self._quit = False
-
-    def run(self):
-        while not self._quit:
-            events = self._debugger.get_events()
-            for e in events:
-                e.execute(self._debugger)
-            time.sleep(0.1)
-
-    def quit(self):
-        self._quit = True
+    @staticmethod
+    def makeNoOp():
+        """Return a message with no operations. Null operation for testing."""
+        return {'type': DebugMessageFactory.MSG_NOP, }
+    
+    @staticmethod
+    def makeThreadStarted(thread_id):
+        """
+        Return a message with information about the thread that started its
+        execution.
+        """
+        return { 'type': DebugMessageFactory.MSG_THREAD_STARTED,
+                 'id': thread_id, }
+    
+    @staticmethod
+    def makeThreadSuspended(thread_id, frame):
+        """
+        Return a message with information about the thread being paused and
+        the position on which it is stopped.
+        """
+        f_path = frame.f_code.co_filename
+        f_line = frame.f_lineno
+        
+        return { 'type': DebugMessageFactory.MSG_THREAD_SUSPENDED,
+                 'id': thread_id,
+                 'file': f_path,
+                 'line':f_line, }
+    
+    @staticmethod
+    def makeThreadEnded(thread_id):
+        """
+        Return a message with information about the thread that is ending its
+        execution.
+        """
+        return { 'type': DebugMessageFactory.MSG_THREAD_ENDED,
+                 'id': thread_id, }
 
 
 class DebuggerInteractor(threading.Thread, SimpleXMLRPCServer):
@@ -138,6 +222,11 @@ class DebuggerInteractor(threading.Thread, SimpleXMLRPCServer):
         t.resume()
         return str(t_id)
 
+    def export_resume_all(self):
+        """Resume execution of all threads."""
+        self._debugger.resume()
+        return 'OK'
+
     def export_step_over(self, t_id):
         """
         Resume execution of the specified thread, but stop at the next
@@ -184,15 +273,29 @@ class DebuggerInteractor(threading.Thread, SimpleXMLRPCServer):
         result = t_obj.evaluate(e_str)
         return serialize.GenericSerializer.serialize(e_str, e_str, result)
 
+    def export_execute(self, t_id, e_str):
+        """
+        Executes e_str in the context of the globals and locals from the
+        execution frame in the specified thread.
+        """
+        t_obj = self._debugger.get_thread(t_id)
+        result = t_obj.execute(e_str)
+        return serialize.GenericSerializer.serialize(e_str, e_str, result)
+
     def export_list_threads(self):
         """
         List the running threads.
         """
         t_list = []
         for t_id in self._debugger._threads:
-            t_name = self._debugger._threads[t_id]._name
-            t_list.insert(0, (t_id, t_name))
+            t_obj = self._debugger._threads[t_id]
+            t_name = t_obj._name
+            t_state = t_obj._state
+            t_list.insert(0, (t_id, t_name, t_state))
         return t_list
+    
+    def export_get_messages(self):
+        return self._debugger.get_messages()
 
 
 class DebuggerThread:
@@ -212,6 +315,10 @@ class DebuggerThread:
         self._f_cmd = CMD_RUN
         self._state = STATE_RUNNING
         self._debugger = debugger
+        
+        # Notify about this thread being created
+        msg = DebugMessageFactory.makeThreadStarted(self._id)
+        self._debugger.put_message(msg)
 
         # Trace frame
         frame.f_trace = self._trace_dispatch
@@ -221,13 +328,12 @@ class DebuggerThread:
         Analyze a given frame and event in the trace. Stop waiting for
         events when a stop is appropriate.
         """
-        if self._state == STATE_TERMINATED:
-            return None
-
         # If thread is "returning" then it might be ending, so, if the frame
         # from which we are "leaving" then we consider this thread ended.
         if event == 'return' and frame is self._f_origin:
             self.stop()
+        
+        if self._state == STATE_TERMINATED:
             return None
 
         # Set current frame
@@ -237,9 +343,12 @@ class DebuggerThread:
         # we are "executing" for example for returns we stop on the caller.
         s_frame = self._stop_frame(frame, event)
         if s_frame:
-            f_path = s_frame.f_code.co_filename
-            f_line = s_frame.f_lineno
             self._state = STATE_PAUSED
+            
+            # Notify about this thread being suspended
+            msg = DebugMessageFactory.makeThreadSuspended(self._id, s_frame)
+            self._debugger.put_message(msg)
+            
             self._wait()
 
         # Return our trace function
@@ -259,6 +368,7 @@ class DebuggerThread:
             if self._f_cmd in [CMD_STEP_OVER, CMD_STEP_OUT] and frame is self._f_stop:
                 self._f_current = frame.f_back
                 return frame.f_back
+
         if event is 'line':
             if self._f_cmd is CMD_STEP_INTO:
                 return frame
@@ -275,13 +385,15 @@ class DebuggerThread:
 
     def _wait(self):
         """Stop the thread until the status change to other than PAUSED."""
-        # TODO: NEW EVENT: THREAD_SUSPENDED
         while self._state == STATE_PAUSED:
             time.sleep(0.1)
 
     def stop(self):
         """Make the current thread stop executing."""
-        # NEW EVENT: THREAD_TERMINATED
+        # Notify about this thread being terminated.
+        msg = DebugMessageFactory.makeThreadEnded(self._id)
+        self._debugger.put_message(msg)
+            
         self._f_origin = None
         self._f_current = None # Release current frame
         self._f_stop = None
@@ -336,14 +448,30 @@ class DebuggerThread:
         """Return the frame of current execution."""
         return self._f_current
 
-    def evaluate(self, expression):
+    def evaluate(self, expr):
         """
-        Evaluate an expression in the context of the current thread
-        and returns its value. Expression cannot contains assignments.
+        Evaluate an expression in the context of the current thread and return
+        its value. The expression cannot contains assignments.
         """
         try:
-            result = eval(expression, self._f_current.f_globals,
+            result = eval(expr, self._f_current.f_globals,
                           self._f_current.f_locals)
+        except SyntaxError as serr:
+            result = serr
+        except Exception as err:
+            result = err
+        return result
+    
+    def execute(self, expr):
+        """
+        Execute an expression in the context of the current thread and return
+        its value.
+        """
+        try:
+            # Compile and execute code
+            c_code = compile(source=expr, filename="<string>", mode='exec')
+            exec c_code in self._f_current.f_globals, self._f_current.f_locals
+            result = ""
         except SyntaxError as serr:
             result = serr
         except Exception as err:
@@ -363,15 +491,21 @@ class Debugger:
         """
         self.s_file = s_file
         self._threads = weakref.WeakValueDictionary()
-        self._events = Queue.Queue()
+        self._messages = Queue.Queue()
         self._breakpoints = dict()      # _breakpoints[filename] = [line1, ...]
         self._state = state
 
     def start(self):
-        """
-        Start debugging session. Begin execution of the debugged code.
-        """
+        """Start debugging session. Begin execution of the debugged code."""
         self._state = STATE_RUNNING
+        return self._state
+    
+    def resume(self):
+        """Resume execution on all the currently executing threads."""
+        self._state = STATE_RUNNING
+        # Terminate all current threads.
+        for t_id in self._threads:
+            self._threads[t_id].resume()
         return self._state
 
     def stop(self):
@@ -392,9 +526,6 @@ class Debugger:
         # Start communication interface (interactor)
         di = DebuggerInteractor(self)
         di.start()
-        # Start event manager
-        ded = DebuggerEventDispatcher(self)
-        ded.start()
         # Set script dirname as first lookup directory
         sys.path.insert(0, os.path.dirname(self.s_file))
         # Mainthread id
@@ -418,7 +549,6 @@ class Debugger:
             threading.settrace(None)
             sys.settrace(None)
             di.quit()
-            ded.quit()
             self._state = STATE_TERMINATED
 
     def trace_dispatch(self, frame, event, arg):
@@ -446,22 +576,22 @@ class Debugger:
             return self._threads[t_id]._trace_dispatch
         return None
 
-    def get_events(self):
+    def get_messages(self):
         """
-        Return the debugger's available events. Events allow clients to know
-        the current state of the debugging session.
+        Return the debugger's available messages. Messages allow clients to
+        know the current state of the debugging session.
         """
         result = []
-        while not self._events.empty():
-            result.append(self._events.get(block=True))
+        while not self._messages.empty():
+            result.append(self._messages.get(block=True))
         return result
 
-    def put_event(self, e):
+    def put_message(self, e):
         """
         Publish a new event on the event queue of this debugger. Events can be
-        retrieved by the get_events method.
+        retrieved by the get_messages method.
         """
-        self._events.put(e)
+        self._messages.put(e)
 
     def get_thread(self, t_id):
         """
