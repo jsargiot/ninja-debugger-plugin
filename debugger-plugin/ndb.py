@@ -196,7 +196,7 @@ class DebuggerInteractor(threading.Thread, SimpleXMLRPCServer):
         """
         t_obj = self._debugger.get_thread(t_id)
         result = t_obj.evaluate(e_str)
-        return serialize.GenericSerializer.serialize(e_str, e_str, result)
+        return serialize.serialize(e_str, e_str, result)
 
     def export_execute(self, t_id, e_str):
         """
@@ -205,7 +205,7 @@ class DebuggerInteractor(threading.Thread, SimpleXMLRPCServer):
         """
         t_obj = self._debugger.get_thread(t_id)
         result = t_obj.execute(e_str)
-        return serialize.GenericSerializer.serialize(e_str, e_str, result)
+        return serialize.serialize(e_str, e_str, result)
 
     def export_list_threads(self):
         """List the running threads."""
