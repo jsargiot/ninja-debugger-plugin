@@ -3,91 +3,124 @@
 """
     Module to serialize objects.
 """
+__all__ = ['serialize']
+
+__PLAIN_TYPES__ = [ bool, buffer, file, float, int, long,
+                type(None), object, slice, str, type, ]
 
 
-class GenericSerializer(object):
+def serialize(name, expr, result, depth = 1):
+    """
+    Serialize the result of the expression as a nested array of name, expr and
+    value items. Depth argument defines how deep the serialization should go.
     
-    plain_types = [ bool, buffer, file, float, int, long,
-                    type(None), object, slice, str, type, ]
+    Example:
     
-    @staticmethod
-    def serialize(name, expr, result, depth = 1):
-        s_res = {}    # serialized result
-        s_res['name'] = name
-        s_res['expr'] = expr
-        s_res['value'] = repr(result)
-        
-        result_type = type(result)
-        s_res['type'] = result_type.__name__
-        s_res['has_childs'] = False
-        
-        if not result_type in GenericSerializer.plain_types:
-            # We've got a compound value
-            s_res['has_childs'] = True
-        
-        if depth == 0 or not s_res['has_childs']:
-            return s_res
-        
-        s_res['childs'] = []
-        if isinstance(result, dict):
-            for key, val in result.items():
-                s_child = GenericSerializer.serialize(key,
-                                             "({0})[{1}]".format(expr, repr(key)),
-                                             val,
-                                             depth -1)
-                s_res['childs'].append(s_child)
-        
-        elif isinstance(result, list) or isinstance(result, tuple):
-            for key, val in enumerate(result):
-                s_child = GenericSerializer.serialize(key,
-                                             "({0})[{1}]".format(expr, repr(key)),
-                                             val,
-                                             depth -1)
-                s_res['childs'].append(s_child)
-        else:
-            attrs = dir(result)
-            for attr in attrs:
-                if attr.startswith('__') or attr.startswith('_'):
-                    continue
-                try:
-                    val = getattr(result, attr)
-                    s_child = GenericSerializer.serialize(attr,
-                                             "({0}).{1}".format(expr, attr),
-                                             val,
-                                             depth -1)
-                    s_res['childs'].append(s_child)
-                except Exception as e:
-                    print repr(e)
-                    pass
-        
+    >>> deep_dict = {'uno': [1, 11, 111], 'dos': [2, 22, 222],}
+    >>> serialize('somename', "deep_dict", deep_dict)
+    {
+        'name': 'somename',
+        'expr': 'deep_dict',
+        'type': 'dict',
+        'value': "{'dos': [2, 22, 222], 'uno': [1, 11, 111]}",
+        'has_childs': True,
+        'childs': [{
+            'has_childs': True,
+            'expr': "(deep_dict)['dos']",
+            'type': 'list',
+            'name': 'dos',
+            'value': '[2, 22, 222]'
+        },{
+            'has_childs': True,
+            'expr': "(deep_dict)['uno']",
+            'type': 'list',
+            'name': 'uno',
+            'value': '[1, 11, 111]'
+        }],
+    }
+    (Output of serialize was beautified to show the structure of the result)
+    """
+    s_res = {}    # serialized result
+    s_res['name'] = name
+    s_res['expr'] = expr
+    s_res['value'] = repr(result)
+    
+    result_type = type(result)
+    s_res['type'] = result_type.__name__
+    s_res['has_childs'] = False
+    
+    if not result_type in __PLAIN_TYPES__:
+        # We've got a compound value
+        s_res['has_childs'] = True
+    
+    if depth == 0 or not s_res['has_childs']:
         return s_res
-
-
-class TestObject(object):
-    def __init__(self):
-        self.a = "a"
     
-    def un_metodo(self, unarg):
-        return "Hola"
+    s_res['childs'] = []
+    if isinstance(result, dict):
+        for key, val in result.items():
+            s_child = serialize(
+                    key, "({0})[{1}]".format(expr, repr(key)),
+                    val, depth -1)
+            s_res['childs'].append(s_child)
+    
+    elif isinstance(result, list) or isinstance(result, tuple):
+        for key, val in enumerate(result):
+            s_child = serialize(
+                    key, "({0})[{1}]".format(expr, repr(key)),
+                    val, depth -1)
+            s_res['childs'].append(s_child)
+    else:
+        attrs = dir(result)
+        for attr in attrs:
+            if attr.startswith('__') or attr.startswith('_'):
+                continue
+            try:
+                val = getattr(result, attr)
+                s_child = serialize(attr,
+                                         "({0}).{1}".format(expr, attr),
+                                         val,
+                                         depth -1)
+                s_res['childs'].append(s_child)
+            except AttributeError as atte:
+                print repr(atte)
+    
+    return s_res
+
 
 if __name__ == '__main__':
-    flat_dict = {
+    __flat_dict__ = {
                     'a': 'First letter',
                     'b': 'Second letter',
                     'c': 'Third letter',
                 }
-    
-    deep_dict = {
+    __deep_dict__ = {
                     'uno': [1, 11, 111],
                     'dos': [2, 22, 222],
                     'tres': [3, 33, 333],
                 }
     
-    custom_obj = TestObject()
+    class _TestObject(object):
+        """Class object to test serialization of object types."""
+
+        def __init__(self):
+            """Testing method."""
+            self._attr = "a"
+        
+        def un_metodo(self, unarg = None):
+            """Testing method."""
+            return "Hola" + self._attr + repr(unarg)
+        
+        def otro_metodo(self):
+            """Testing method."""
+            return "Chau" + self._attr
+    
+    __custom_obj__ = _TestObject()
     
     import pprint
-    #pprint.pprint(GenericSerializer.serialize('flat', 'flat', flat_dict))
-    pprint.pprint(GenericSerializer.serialize('deep', 'deep', deep_dict))
-    print "-----"
-    pprint.pprint(GenericSerializer.serialize('obj', 'obj', custom_obj))
-
+    print "----- Serializing flat dictionary."
+    pprint.pprint(serialize('flat', 'flat', __flat_dict__))
+    print "----- Serializing deep dictionary."
+    pprint.pprint(serialize('deep', 'deep', __deep_dict__))
+    print "----- Serializing custom python object."
+    pprint.pprint(serialize('obj', 'obj', __custom_obj__))
