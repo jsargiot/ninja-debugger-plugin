@@ -15,10 +15,9 @@ import threading
 import time
 import weakref
 
-logger = logging.getLogger("ninja_debugger")
+__logger__ = logging.getLogger("ninja_debugger")
 
 # Debugger internal data
-_DEBUGGER_VERSION = "0.2"
 _IGNORE_FILES = ['threading.py', 'process.py', 'ndb.py', 'serialize.py'
                  'weakref.py']
 
@@ -47,12 +46,12 @@ class DebugMessageFactory:
         self._counter = 0
 
     @staticmethod
-    def makeNoOp():
+    def make_noop():
         """Return a message with no operations. Null operation for testing."""
         return {'type': DebugMessageFactory.MSG_NOP, }
     
     @staticmethod
-    def makeThreadStarted(thread_id):
+    def make_thread_started(thread_id):
         """
         Return a message with information about the thread that started its
         execution.
@@ -61,7 +60,7 @@ class DebugMessageFactory:
                  'id': thread_id, }
     
     @staticmethod
-    def makeThreadSuspended(thread_id, frame):
+    def make_thread_suspended(thread_id, frame):
         """
         Return a message with information about the thread being paused and
         the position on which it is stopped.
@@ -75,7 +74,7 @@ class DebugMessageFactory:
                  'line':f_line, }
     
     @staticmethod
-    def makeThreadEnded(thread_id):
+    def make_thread_ended(thread_id):
         """
         Return a message with information about the thread that is ending its
         execution.
@@ -90,6 +89,7 @@ class DebuggerInteractor(threading.Thread, SimpleXMLRPCServer):
     requests to the debugger. This interface exports only methods beggining
     with "export_".
     """
+    api_version = "0.2"
 
     def __init__(self, debugger):
         """
@@ -126,7 +126,7 @@ class DebuggerInteractor(threading.Thread, SimpleXMLRPCServer):
 
     def export_ping(self):
         """Return the current debugger version."""
-        return _DEBUGGER_VERSION
+        return self.api_version
 
     def export_start(self):
         """Start the debugger session. Return 'OK' if everything is fine."""
@@ -143,8 +143,8 @@ class DebuggerInteractor(threading.Thread, SimpleXMLRPCServer):
         Resume execution of the specified thread. Stop execution only at
         breakpoints. Return the id of the thread resumed.
         """
-        t = self._debugger.get_thread(t_id)
-        t.resume()
+        thread = self._debugger.get_thread(t_id)
+        thread.resume()
         return str(t_id)
 
     def export_resume_all(self):
@@ -157,8 +157,8 @@ class DebuggerInteractor(threading.Thread, SimpleXMLRPCServer):
         Resume execution of the specified thread, but stop at the next
         line in the current frame of execution.
         """
-        t = self._debugger.get_thread(t_id)
-        t.step_over()
+        thread = self._debugger.get_thread(t_id)
+        thread.step_over()
         return str(t_id)
 
     def export_step_into(self, t_id):
@@ -166,8 +166,8 @@ class DebuggerInteractor(threading.Thread, SimpleXMLRPCServer):
         Resume execution of the specified thread, but stop at the very next
         line of code, in or within the current frame.
         """
-        t = self._debugger.get_thread(t_id)
-        t.step_into()
+        thread = self._debugger.get_thread(t_id)
+        thread.step_into()
         return str(t_id)
 
     def export_step_out(self, t_id):
@@ -175,8 +175,8 @@ class DebuggerInteractor(threading.Thread, SimpleXMLRPCServer):
         Resume execution of the specified thread, but stop after the return of
         the current frame.
         """
-        t = self._debugger.get_thread(t_id)
-        t.step_out()
+        thread = self._debugger.get_thread(t_id)
+        thread.step_out()
         return str(t_id)
 
     def export_get_stack(self, t_id):
@@ -184,10 +184,10 @@ class DebuggerInteractor(threading.Thread, SimpleXMLRPCServer):
         t_obj = self._debugger.get_thread(t_id)
         return t_obj.get_stack()
 
-    def export_set_breakpoint(self, file, line):
-        """Set the specified line in file as a breakpoint."""
-        self._debugger.set_breakpoint(file, line)
-        return self._debugger._breakpoints
+    def export_set_breakpoint(self, filename, line):
+        """Set the specified line in filename as a breakpoint."""
+        self._debugger.set_breakpoint(filename, line)
+        return (file, line)
 
     def export_evaluate(self, t_id, e_str):
         """
@@ -208,18 +208,17 @@ class DebuggerInteractor(threading.Thread, SimpleXMLRPCServer):
         return serialize.GenericSerializer.serialize(e_str, e_str, result)
 
     def export_list_threads(self):
-        """
-        List the running threads.
-        """
+        """List the running threads."""
         t_list = []
-        for t_id in self._debugger._threads:
-            t_obj = self._debugger._threads[t_id]
-            t_name = t_obj._name
-            t_state = t_obj._state
+        for t_id in self._debugger.get_threads():
+            t_obj = self._debugger.get_thread(t_id)
+            t_name = t_obj.name()
+            t_state = t_obj.state()
             t_list.insert(0, (t_id, t_name, t_state))
         return t_list
     
     def export_get_messages(self):
+        """Retrieve the list of unread messages of the debugger."""
         return self._debugger.get_messages()
 
 
@@ -230,12 +229,12 @@ class DebuggerThread:
     class exposes methods to control its execution.
     """
 
-    def __init__(self, id, name, frame, debugger):
+    def __init__(self, tid, name, frame, debugger):
         """
         Create a new DebuggerThread from the starting frame with an id and a
         name.
         """
-        self._id = id
+        self._id = tid
         self._name = name
         self._f_origin = frame
         self._f_current = frame
@@ -245,7 +244,7 @@ class DebuggerThread:
         self._debugger = debugger
         
         # Notify about this thread being created
-        msg = DebugMessageFactory.makeThreadStarted(self._id)
+        msg = DebugMessageFactory.make_thread_started(self._id)
         self._debugger.put_message(msg)
 
         # Trace frame
@@ -274,7 +273,7 @@ class DebuggerThread:
             self._state = STATE_PAUSED
             
             # Notify about this thread being suspended
-            msg = DebugMessageFactory.makeThreadSuspended(self._id, s_frame)
+            msg = DebugMessageFactory.make_thread_suspended(self._id, s_frame)
             self._debugger.put_message(msg)
             
             self._wait()
@@ -316,10 +315,18 @@ class DebuggerThread:
         while self._state == STATE_PAUSED:
             time.sleep(0.1)
 
+    def name(self):
+        """Return the name of the DebuggerThread."""
+        return self._name
+    
+    def state(self):
+        """Return the state of the DebuggerThread."""
+        return self._state
+
     def stop(self):
         """Make the current thread stop executing."""
         # Notify about this thread being terminated.
-        msg = DebugMessageFactory.makeThreadEnded(self._id)
+        msg = DebugMessageFactory.make_thread_ended(self._id)
         self._debugger.put_message(msg)
             
         self._f_origin = None
@@ -347,7 +354,6 @@ class DebuggerThread:
         self._f_stop = None
         self._f_cmd = CMD_STEP_INTO
         self._state = STATE_RUNNING
-        pass
 
     def step_out(self):
         """Stop execution after the return of the current frame."""
@@ -453,12 +459,10 @@ class Debugger:
         as clean as we can provide).
         """
         # Start communication interface (interactor)
-        di = DebuggerInteractor(self)
-        di.start()
+        dit = DebuggerInteractor(self)
+        dit.start()
         # Set script dirname as first lookup directory
         sys.path.insert(0, os.path.dirname(self.s_file))
-        # Mainthread id
-        mt_id = threading.currentThread().ident
         try:
             # Wait until we're ready to start
             while self._state != STATE_RUNNING:
@@ -477,7 +481,7 @@ class Debugger:
         finally:
             threading.settrace(None)
             sys.settrace(None)
-            di.quit()
+            dit.quit()
             self._state = STATE_TERMINATED
 
     def trace_dispatch(self, frame, event, arg):
@@ -515,36 +519,40 @@ class Debugger:
             result.append(self._messages.get(block=True))
         return result
 
-    def put_message(self, e):
+    def put_message(self, msg):
         """
         Publish a new event on the event queue of this debugger. Events can be
         retrieved by the get_messages method.
         """
-        self._messages.put(e)
+        self._messages.put(msg)
 
     def get_thread(self, t_id):
         """
         Return the thread identified with t_id.
         """
         return self._threads[t_id]
+    
+    def get_threads(self):
+        """Return all the threads currently executing."""
+        return self._threads
 
-    def set_breakpoint(self, file, line):
+    def set_breakpoint(self, filename, line):
         """
-        Add a breaking point in the debugging session in the specified file and
-        line number. Debugging session will stop at that point waiting for user
-        interaction.
+        Add a breaking point in the debugging session in the specified filename
+        and line number. Debugging session will stop at that point waiting for
+        user interaction.
         """
-        fullpath = os.path.abspath(file)
+        fullpath = os.path.abspath(filename)
         lines = self._breakpoints.setdefault(fullpath, [])
         if not line in lines:
             lines.append(line)
 
-    def is_breakpoint(self, file, line):
+    def is_breakpoint(self, filename, line):
         """
-            Checks wheather the file:line is a break point. Returns True if it
-            is, False otherwise.
+        Checks wheather the filename:line is a break point. Returns True if
+        it is, False otherwise.
         """
-        fullpath = os.path.abspath(file)
+        fullpath = os.path.abspath(filename)
         if fullpath in self._breakpoints:
             f_breaks = self._breakpoints.get(fullpath, [])
             return line in f_breaks
