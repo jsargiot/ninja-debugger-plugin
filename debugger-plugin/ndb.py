@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 *-*
-'''
+"""
 This module provides objects to manage the execution of the debugger.
-'''
+"""
 
 import logging
 import os
@@ -14,7 +14,6 @@ import sys
 import threading
 import time
 import weakref
-
 
 logger = logging.getLogger("ninja_debugger")
 
@@ -36,85 +35,8 @@ CMD_STEP_INTO = "Into"
 CMD_STEP_OUT = "Out"
 
 
-"""
-
-INTERACTIONS
-
-Operation               Workflow                Description
-=========               ========                ===========
-ping                    User -> Debugger        Returns the debugger version.
-
-start                   User -> Debugger        Begins debugging execution.
-
-stop                    User -> Debugger        Stops debugging execution.
-
-list_threads            User -> Debugger        Returns the list of threads
-                                                currently executing.
-thread_started          Debugger -> User        Notifies about a new thread.
-
-thread_ended            Debugger -> User        Notifies about a thread's end.
-
-thread_suspended        Debugger -> User        Notifies that a thread has
-                                                being stopped at a point.
-
-resume                  User -> Debugger        Resumes execution of a stopped
-                                                thread.
-
-step_over               User -> Debugger        Steps over next statement.
-
-step_into               User -> Debugger        Steps into next statement.
-
-step_out                User -> Debugger        Steps out of current block of
-                                                statements and to the outer 
-                                                frame.
-
-get_stack               User -> Debugger        Returns the stack trace for a
-                                                particular thread.
-
-set_breakpoint          User -> Debugger        Sets a stopping point.
-
-evaluate                User -> Debugger        Returns the value of the
-                                                expression when evaluated in
-                                                the context of the specified
-                                                thread.
-
-get_messages            User -> Debugger        Returns the available messages
-                                                from the debugger.
-
-
-Workflow Example:
-
-
-User Code               Debugger (ndb.py)
----------               -----------------
-(executes debugger)
-
-ping            ->      {version}
-
-set_breakpoint  ->      'OK'
-
-start           ->      'OK'
-
-get_messages    ->      [ {msg1}, {msg2}, ...]
-                        (threads created, suspended, ended, etc)
-
-step_*          ->      {tid}
-
-evaluate        ->      {evaluation result}
-
-resume          ->      {tid}
-
-get_messages    ->      [ {msg9}, {msg10}, ...]
-                        (threads created, suspended, ended, etc)
-
-resume_all      ->      'OK'
-
-stop            ->      'OK'
-
-
-"""
-
 class DebugMessageFactory:
+    """Factory class to create debugger messages."""
 
     MSG_NOP = 0x01
     MSG_THREAD_STARTED = 0x02
@@ -164,6 +86,9 @@ class DebugMessageFactory:
 
 class DebuggerInteractor(threading.Thread, SimpleXMLRPCServer):
     """
+    Interactor class that receives input from a RPC-channel and routes those
+    requests to the debugger. This interface exports only methods beggining
+    with "export_".
     """
 
     def __init__(self, debugger):
@@ -300,6 +225,9 @@ class DebuggerInteractor(threading.Thread, SimpleXMLRPCServer):
 
 class DebuggerThread:
     """
+    DebuggerThread class represents a Thread in the debugging session. Every
+    thread (including MainThread) has a corresponding object. An object of this
+    class exposes methods to control its execution.
     """
 
     def __init__(self, id, name, frame, debugger):
@@ -481,7 +409,8 @@ class DebuggerThread:
 
 class Debugger:
     """
-    Debugger Class
+    Debugger Class that manages the debugging session. Allows to stop, resume
+    and start execution of debugged code.
     """
 
     def __init__(self, s_file, state=STATE_PAUSED):
