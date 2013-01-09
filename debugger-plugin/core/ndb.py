@@ -6,14 +6,14 @@ This module provides objects to manage the execution of the debugger.
 
 import logging
 import os
-import process
 import Queue
-import serialize
 from SimpleXMLRPCServer import SimpleXMLRPCServer
 import sys
 import threading
 import time
 import weakref
+
+import process
 
 __all__ = ["STATE_INITIALIZED", "STATE_RUNNING", "STATE_PAUSED",
            "STATE_TERMINATED", "DebugMessageFactory", "DebuggerInteractor",
@@ -322,9 +322,6 @@ class Debugger:
         Starts execution of the script in a clean environment (or at least
         as clean as we can provide).
         """
-        # Start communication interface (interactor)
-        dit = DebuggerInteractor(self)
-        dit.start()
         # Set script dirname as first lookup directory
         sys.path.insert(0, os.path.dirname(self.s_file))
         try:
@@ -345,7 +342,6 @@ class Debugger:
         finally:
             threading.settrace(None)
             sys.settrace(None)
-            dit.quit()
             self._state = STATE_TERMINATED
 
     def trace_dispatch(self, frame, event, arg):
@@ -429,5 +425,13 @@ if __name__ == '__main__':
         raise SystemExit
     # Remove ourselves from the argv. (Try to be transparent to the script).
     del sys.argv[0]
-
-    Debugger(sys.argv[0]).run()
+    # Create debugger object
+    dbg = Debugger(sys.argv[0])
+    # Start communication interface (RPC) adapter
+    import rpc_adapter
+    rpcadapter = rpc_adapter.RPCDebuggerAdapter(dbg)
+    rpcadapter.start()
+    # Start debugger
+    dbg.run()
+    # Stop RPC Adapter
+    rpcadapter.quit()
