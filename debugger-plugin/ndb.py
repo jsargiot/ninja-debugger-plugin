@@ -15,6 +15,10 @@ import threading
 import time
 import weakref
 
+__all__ = ["STATE_INITIALIZED", "STATE_RUNNING", "STATE_PAUSED",
+           "STATE_TERMINATED", "DebugMessageFactory", "DebuggerInteractor",
+           "DebuggerThread", "Debugger"]
+
 __logger__ = logging.getLogger("ninja_debugger")
 
 # Debugger internal data
@@ -26,12 +30,6 @@ STATE_INITIALIZED = "STATE_INITIALIZED"
 STATE_RUNNING = "STATE_RUNNING"
 STATE_PAUSED = "STATE_PAUSED"
 STATE_TERMINATED = "STATE_TERMINATED"
-
-# Commands
-CMD_RUN = "Run"
-CMD_STEP_OVER = "Over"
-CMD_STEP_INTO = "Into"
-CMD_STEP_OUT = "Out"
 
 
 class DebugMessageFactory:
@@ -83,151 +81,17 @@ class DebugMessageFactory:
                  'id': thread_id, }
 
 
-class DebuggerInteractor(threading.Thread, SimpleXMLRPCServer):
-    """
-    Interactor class that receives input from a RPC-channel and routes those
-    requests to the debugger. This interface exports only methods beggining
-    with "export_".
-    """
-    api_version = "0.2"
-
-    def __init__(self, debugger):
-        """
-        Create a new DebuggerInteractor instance. Allow external users
-        to interact with the debugger through XML-RPC.
-        """
-        threading.Thread.__init__(self, name="DebuggerInteractor")
-        SimpleXMLRPCServer.__init__(self, ("", 8765), logRequests=False)
-
-        self._quit = False
-        self._debugger = debugger
-
-    def _dispatch(self, method, params):
-        """
-        Return the function associated for the method specified. Return the
-        function starting with "export_" + method to prevent potential security
-        problems.
-        """
-        try:
-            func = getattr(self, 'export_' + method)
-        except AttributeError:
-            raise Exception('method "%s" is not supported' % method)
-        else:
-            return func(*params)
-
-    def run(self):
-        """Start request handling loop."""
-        while not self._quit:
-            self.handle_request()
-
-    def quit(self):
-        """Stop the request handling loop."""
-        self._quit = True
-
-    def export_ping(self):
-        """Return the current debugger version."""
-        return self.api_version
-
-    def export_start(self):
-        """Start the debugger session. Return 'OK' if everything is fine."""
-        self._debugger.start()
-        return "OK"
-
-    def export_stop(self):
-        """Stop debugger session. ."""
-        self._debugger.stop()
-        return "OK"
-
-    def export_resume(self, t_id):
-        """
-        Resume execution of the specified thread. Stop execution only at
-        breakpoints. Return the id of the thread resumed.
-        """
-        thread = self._debugger.get_thread(t_id)
-        thread.resume()
-        return str(t_id)
-
-    def export_resume_all(self):
-        """Resume execution of all threads."""
-        self._debugger.resume()
-        return 'OK'
-
-    def export_step_over(self, t_id):
-        """
-        Resume execution of the specified thread, but stop at the next
-        line in the current frame of execution.
-        """
-        thread = self._debugger.get_thread(t_id)
-        thread.step_over()
-        return str(t_id)
-
-    def export_step_into(self, t_id):
-        """
-        Resume execution of the specified thread, but stop at the very next
-        line of code, in or within the current frame.
-        """
-        thread = self._debugger.get_thread(t_id)
-        thread.step_into()
-        return str(t_id)
-
-    def export_step_out(self, t_id):
-        """
-        Resume execution of the specified thread, but stop after the return of
-        the current frame.
-        """
-        thread = self._debugger.get_thread(t_id)
-        thread.step_out()
-        return str(t_id)
-
-    def export_get_stack(self, t_id):
-        """Return the stack trace of the specified thread."""
-        t_obj = self._debugger.get_thread(t_id)
-        return t_obj.get_stack()
-
-    def export_set_breakpoint(self, filename, line):
-        """Set the specified line in filename as a breakpoint."""
-        self._debugger.set_breakpoint(filename, line)
-        return (file, line)
-
-    def export_evaluate(self, t_id, e_str):
-        """
-        Evaluate e_str in the context of the globals and locals from
-        the execution frame in the specified thread.
-        """
-        t_obj = self._debugger.get_thread(t_id)
-        result = t_obj.evaluate(e_str)
-        return serialize.serialize(e_str, e_str, result)
-
-    def export_execute(self, t_id, e_str):
-        """
-        Executes e_str in the context of the globals and locals from the
-        execution frame in the specified thread.
-        """
-        t_obj = self._debugger.get_thread(t_id)
-        result = t_obj.execute(e_str)
-        return serialize.serialize(e_str, e_str, result)
-
-    def export_list_threads(self):
-        """List the running threads."""
-        t_list = []
-        for t_id in self._debugger.get_threads():
-            t_obj = self._debugger.get_thread(t_id)
-            t_name = t_obj.name()
-            t_state = t_obj.state()
-            t_list.insert(0, (t_id, t_name, t_state))
-        return t_list
-    
-    def export_get_messages(self):
-        """Retrieve the list of unread messages of the debugger."""
-        return self._debugger.get_messages()
-
-
 class DebuggerThread:
     """
     DebuggerThread class represents a Thread in the debugging session. Every
     thread (including MainThread) has a corresponding object. An object of this
     class exposes methods to control its execution.
     """
+    # Commands
+    CMD_RUN = "Run"
+    CMD_STEP_OVER = "Over"
+    CMD_STEP_INTO = "Into"
+    CMD_STEP_OUT = "Out"
 
     def __init__(self, tid, name, frame, debugger):
         """
@@ -239,7 +103,7 @@ class DebuggerThread:
         self._f_origin = frame
         self._f_current = frame
         self._f_stop = None
-        self._f_cmd = CMD_RUN
+        self._f_cmd = DebuggerThread.CMD_RUN
         self._state = STATE_RUNNING
         self._debugger = debugger
         
@@ -289,17 +153,17 @@ class DebuggerThread:
         if event is 'return':
             # Depending on the kind of command we have, we should check if this
             # is a stopping point. Always return the upper frame on a return.
-            if self._f_cmd is CMD_STEP_INTO:
+            if self._f_cmd is DebuggerThread.CMD_STEP_INTO:
                 self._f_current = frame.f_back
                 return frame.f_back
-            if self._f_cmd in [CMD_STEP_OVER, CMD_STEP_OUT] and frame is self._f_stop:
+            if self._f_cmd in [DebuggerThread.CMD_STEP_OVER, DebuggerThread.CMD_STEP_OUT] and frame is self._f_stop:
                 self._f_current = frame.f_back
                 return frame.f_back
 
         if event is 'line':
-            if self._f_cmd is CMD_STEP_INTO:
+            if self._f_cmd is DebuggerThread.CMD_STEP_INTO:
                 return frame
-            if self._f_cmd is CMD_STEP_OVER:
+            if self._f_cmd is DebuggerThread.CMD_STEP_OVER:
                 if frame is self._f_stop:
                     return frame
 
@@ -339,26 +203,26 @@ class DebuggerThread:
     def resume(self):
         """Make this thread resume execution after a stop."""
         self._f_stop = None
-        self._f_cmd = CMD_RUN
+        self._f_cmd = DebuggerThread.CMD_RUN
         self._state = STATE_RUNNING
         return self._state
 
     def step_over(self):
         """Stop on the next line in the current frame."""
         self._f_stop = self._f_current
-        self._f_cmd = CMD_STEP_OVER
+        self._f_cmd = DebuggerThread.CMD_STEP_OVER
         self._state = STATE_RUNNING
 
     def step_into(self):
         """Stop execution at the next line of code."""
         self._f_stop = None
-        self._f_cmd = CMD_STEP_INTO
+        self._f_cmd = DebuggerThread.CMD_STEP_INTO
         self._state = STATE_RUNNING
 
     def step_out(self):
         """Stop execution after the return of the current frame."""
         self._f_stop = self._f_current
-        self._f_cmd = CMD_STEP_OUT
+        self._f_cmd = DebuggerThread.CMD_STEP_OUT
         self._state = STATE_RUNNING
 
     def get_stack(self):
