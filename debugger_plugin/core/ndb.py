@@ -52,7 +52,7 @@ class DebugMessageFactory:
                  'id': thread_id, }
     
     @staticmethod
-    def make_thread_suspended(thread_id, frame, args):
+    def make_thread_suspended(thread_id, frame):
         """
         Return a message with information about the thread being paused and
         the position on which it is stopped.
@@ -63,8 +63,7 @@ class DebugMessageFactory:
         return { 'type': DebugMessageFactory.MSG_THREAD_SUSPENDED,
                  'id': thread_id,
                  'file': f_path,
-                 'line':f_line,
-                 'args': args }
+                 'line':f_line }
     
     @staticmethod
     def make_thread_ended(thread_id):
@@ -132,9 +131,7 @@ class DebuggerThread:
             self._state = STATE_PAUSED
             
             # Notify about this thread being suspended
-            msg = DebugMessageFactory.make_thread_suspended(self._id,
-                                                            s_frame,
-                                                            arg)
+            msg = DebugMessageFactory.make_thread_suspended(self._id, s_frame)
             self._debugger.put_message(msg)
             
             self._wait()
