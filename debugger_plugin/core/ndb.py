@@ -7,19 +7,12 @@ This module provides objects to manage the execution of the debugger.
 import logging
 import os
 import Queue
-from SimpleXMLRPCServer import SimpleXMLRPCServer
 import sys
 import threading
 import time
 import weakref
 
-import process
-
-__all__ = ["STATE_INITIALIZED", "STATE_RUNNING", "STATE_PAUSED",
-           "STATE_TERMINATED", "DebugMessageFactory", "DebuggerInteractor",
-           "DebuggerThread", "Debugger"]
-
-__logger__ = logging.getLogger("ninja_debugger")
+import debugger_plugin.core.process
 
 # Debugger internal data
 _IGNORE_FILES = ['threading.py', 'process.py', 'ndb.py', 'serialize.py'
@@ -41,6 +34,7 @@ class DebugMessageFactory:
     MSG_THREAD_ENDED = 0x04
 
     def __init__(self):
+        self.logger = logging.getLogger(__name__)
         self._counter = 0
 
     @staticmethod
@@ -58,7 +52,7 @@ class DebugMessageFactory:
                  'id': thread_id, }
     
     @staticmethod
-    def make_thread_suspended(thread_id, frame):
+    def make_thread_suspended(thread_id, frame, args):
         """
         Return a message with information about the thread being paused and
         the position on which it is stopped.
@@ -69,7 +63,8 @@ class DebugMessageFactory:
         return { 'type': DebugMessageFactory.MSG_THREAD_SUSPENDED,
                  'id': thread_id,
                  'file': f_path,
-                 'line':f_line, }
+                 'line':f_line,
+                 'args': args }
     
     @staticmethod
     def make_thread_ended(thread_id):
@@ -112,9 +107,9 @@ class DebuggerThread:
         self._debugger.put_message(msg)
 
         # Trace frame
-        frame.f_trace = self._trace_dispatch
+        frame.f_trace = self.trace_dispatch
 
-    def _trace_dispatch(self, frame, event, arg):
+    def trace_dispatch(self, frame, event, arg):
         """
         Analyze a given frame and event in the trace. Stop waiting for
         events when a stop is appropriate.
@@ -137,13 +132,15 @@ class DebuggerThread:
             self._state = STATE_PAUSED
             
             # Notify about this thread being suspended
-            msg = DebugMessageFactory.make_thread_suspended(self._id, s_frame)
+            msg = DebugMessageFactory.make_thread_suspended(self._id,
+                                                            s_frame,
+                                                            arg)
             self._debugger.put_message(msg)
             
             self._wait()
 
         # Return our trace function
-        return self._trace_dispatch
+        return self.trace_dispatch
 
     def _stop_frame(self, frame, event):
         """
@@ -156,7 +153,9 @@ class DebuggerThread:
             if self._f_cmd is DebuggerThread.CMD_STEP_INTO:
                 self._f_current = frame.f_back
                 return frame.f_back
-            if self._f_cmd in [DebuggerThread.CMD_STEP_OVER, DebuggerThread.CMD_STEP_OUT] and frame is self._f_stop:
+            
+            stops = [DebuggerThread.CMD_STEP_OVER, DebuggerThread.CMD_STEP_OUT]
+            if self._f_cmd in stops and frame is self._f_stop:
                 self._f_current = frame.f_back
                 return frame.f_back
 
@@ -332,7 +331,7 @@ class Debugger:
             threading.settrace(self.trace_dispatch)
             sys.settrace(self.trace_dispatch)
             # Execute file
-            process.CodeExecutor(self.s_file).run()
+            debugger_plugin.core.process.CodeExecutor(self.s_file).run()
             # UnSet tracing...
             threading.settrace(None)
             sys.settrace(None)
@@ -366,7 +365,7 @@ class Debugger:
             self._threads[t_id] = DebuggerThread(t_id, t_name, frame, self)
         else:
             # Redirect the trace to the thread's method
-            return self._threads[t_id]._trace_dispatch
+            return self._threads[t_id].trace_dispatch
         return None
 
     def get_messages(self):
@@ -428,8 +427,8 @@ if __name__ == '__main__':
     # Create debugger object
     dbg = Debugger(sys.argv[0])
     # Start communication interface (RPC) adapter
-    import rpc_adapter
-    rpcadapter = rpc_adapter.RPCDebuggerAdapter(dbg)
+    import debugger_plugin.core.rpc_adapter
+    rpcadapter = debugger_plugin.core.rpc_adapter.RPCDebuggerAdapter(dbg)
     rpcadapter.start()
     # Start debugger
     dbg.run()

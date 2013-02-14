@@ -8,11 +8,7 @@ import logging
 from SimpleXMLRPCServer import SimpleXMLRPCServer
 import threading
 
-import serialize
-
-__all__ = ["RPCDebuggerAdapter"]
-
-__logger__ = logging.getLogger("rpc_debugger_adapter")
+import debugger_plugin.core.serialize
 
 
 class RPCDebuggerAdapter(threading.Thread, SimpleXMLRPCServer):
@@ -31,6 +27,7 @@ class RPCDebuggerAdapter(threading.Thread, SimpleXMLRPCServer):
         threading.Thread.__init__(self, name="RPCDebuggerAdapter")
         SimpleXMLRPCServer.__init__(self, ("", 8765), logRequests=False)
 
+        self.logger = logging.getLogger(__name__)
         self._quit = False
         self._debugger = debugger
 
@@ -128,7 +125,7 @@ class RPCDebuggerAdapter(threading.Thread, SimpleXMLRPCServer):
         """
         t_obj = self._debugger.get_thread(t_id)
         result = t_obj.evaluate(e_str)
-        return serialize.serialize(e_str, e_str, result)
+        return debugger_plugin.core.serialize.serialize(e_str, e_str, result)
 
     def export_execute(self, t_id, e_str):
         """
@@ -137,7 +134,7 @@ class RPCDebuggerAdapter(threading.Thread, SimpleXMLRPCServer):
         """
         t_obj = self._debugger.get_thread(t_id)
         result = t_obj.execute(e_str)
-        return serialize.serialize(e_str, e_str, result)
+        return debugger_plugin.core.serialize.serialize(e_str, e_str, result)
 
     def export_list_threads(self):
         """List the running threads."""
