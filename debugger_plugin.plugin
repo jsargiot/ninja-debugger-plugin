@@ -1,7 +1,7 @@
 {
   "url": "",
-  "version": "0.1",
-  "class": "Debugger",
-  "module": "debugger-plugin",
+  "version": "0.2",
+  "class": "DebugPlugin",
+  "module": "debugger_plugin",
   "authors": "Joaquin Sargiotto <joaquinsargiotto@gmail.com>"
 }
