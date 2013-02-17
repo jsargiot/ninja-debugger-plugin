@@ -15,31 +15,36 @@ class CodeExecutor:
     file directly in the current execution.
     """
 
-    def __init__(self, filename):
+    def __init__(self, filename = None, string = None):
         """Create a new CodeExecutor for the specified filename."""
-        self.filename = filename
+        self._name = "<string>"
+        self._code = 'pass'
+        if filename:
+            # Read source from file
+            with open(filename, 'r') as fd:
+                self._code = fd.read() + "\n"
+                self._name = filename
+        elif string:
+            self._code = string
 
     def run(self, glob = None, loc = None):
-        """Run the code using globals and locals."""
+        """
+        Run the code using globals and locals. If no load_file or load_string
+        calls were made, a "pass" is executed.
+        """
         # Define basic globals if they were not specified
         if glob is None:
             glob = {
                 '__name__': '__main__',
                 '__doc__': None,
-                '__file__': self.filename,
+                '__file__': self._name,
                 '__builtins__': __builtin__,
             }
         # If not locals were specified, use globals
         if loc is None:
             loc = glob
-        # Read source from file
-        _fd = open(self.filename, 'r')
-        try:
-            s_code = _fd.read() + "\n"
-        finally:
-            _fd.close()
         # Compile and execute code
-        c_code = compile(source=s_code, filename=self.filename, mode='exec')
+        c_code = compile(source=self._code, filename=self._name, mode='exec')
         exec c_code in glob, loc
 
 

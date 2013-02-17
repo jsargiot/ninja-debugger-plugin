@@ -7,8 +7,9 @@ This module provides RPC interaction with the debugger.
 import logging
 from SimpleXMLRPCServer import SimpleXMLRPCServer
 import threading
+import xmlrpclib
 
-import debugger_plugin.core.serialize
+import serialize
 
 
 class RPCDebuggerAdapter(threading.Thread, SimpleXMLRPCServer):
@@ -125,7 +126,7 @@ class RPCDebuggerAdapter(threading.Thread, SimpleXMLRPCServer):
         """
         t_obj = self._debugger.get_thread(t_id)
         result = t_obj.evaluate(e_str)
-        return debugger_plugin.core.serialize.serialize(e_str, e_str, result)
+        return serialize.serialize(e_str, e_str, result)
 
     def export_execute(self, t_id, e_str):
         """
@@ -134,7 +135,7 @@ class RPCDebuggerAdapter(threading.Thread, SimpleXMLRPCServer):
         """
         t_obj = self._debugger.get_thread(t_id)
         result = t_obj.execute(e_str)
-        return debugger_plugin.core.serialize.serialize(e_str, e_str, result)
+        return serialize.serialize(e_str, e_str, result)
 
     def export_list_threads(self):
         """List the running threads."""
@@ -149,3 +150,152 @@ class RPCDebuggerAdapter(threading.Thread, SimpleXMLRPCServer):
     def export_get_messages(self):
         """Retrieve the list of unread messages of the debugger."""
         return self._debugger.get_messages()
+
+
+
+class RPCDebuggerAdapterClient:
+    """
+    Threads safe class to control a Debugger using the RPCDebuggerAdapter.
+
+    A RPCDebuggerAdapterClient object is used to control a RPCDebuggerAdapter
+    thru RPC calls over the network.
+    
+    By default, the client will try to connect to localhost.
+
+       +-------------+               +------------+          +------------+
+       |  RPCClient  |+------------->| RPCAdapter |--------->|  Debugger  |
+       +-------------+    (RPC)      +------------+          +------------+
+
+    """
+
+    lock = threading.Lock()
+
+    def __init__(self, host="localhost", port=8765):
+        """Creates a new DebuggerMaster to handle a DebuggerSlave."""
+        self.host = host
+        self.port = port
+        self.remote = None
+
+    def __safe_call(self, func, *args):
+        """
+        Executes an RPC call to a non-threaded RPC server securely. This
+        method uses a thread lock to ensure one call at a time.
+        """
+        if self.remote is None:
+            return
+
+        self.lock.acquire()
+        try:
+            return func(*args)
+        except socket.error:
+            raise DebuggerConnectionError("No connection could be made.")
+        finally:
+            self.lock.release()
+
+    def connect(self, retries=1):
+        """
+        Connects to the remote end to start the debugging session. Returns True
+        if connection is successful.
+        """
+        conn_str = "http://{0}:{1}".format(self.host, self.port)
+        self.remote = xmlrpclib.Server(conn_str)
+        while retries > 0:
+            if self.is_alive():
+                return True
+            retries = retries - 1
+        return False
+    
+    def disconnect(self):
+        """
+        Disconnect from the remote end. Always return True
+        """
+        self.remote = None
+        return True
+
+    def is_alive(self):
+        """
+        Check connectivity to the remote debugger. Try to make a RPC call,
+        return False if connection was not successful.
+        """
+        try:
+            self.__safe_call(self.remote.ping)
+            return True
+        except DebuggerConnectionError:
+            pass
+        except Exception:
+            pass
+        return False
+    
+    def start(self):
+        """Start remote debugger execution of code."""
+        return self.__safe_call(self.remote.start)
+    
+    def stop(self):
+        """Stop debugger session and exit current execution."""
+        return self.__safe_call(self.remote.stop)
+    
+    def resume(self, t_id):
+        """Resume the execution of the specified debug thread."""
+        return self.__safe_call(self.remote.resume, t_id)
+    
+    def resume_all(self):
+        """Resume the execution of all debug threads."""
+        return self.__safe_call(self.remote.resume_all)
+        
+    def step_over(self, t_id):
+        """
+        Stop execution of the specified debug thread on the next line of the
+        same file or the parent context.
+        """
+        return self.__safe_call(self.remote.step_over, t_id)
+        
+    def step_into(self, t_id):
+        """
+        Stop execution of the specifed debug thread in the next instruction.
+        """
+        return self.__safe_call(self.remote.step_into, t_id)
+        
+    def step_out(self, t_id):
+        """
+        Resume execution of the specified debug thread until a return statement
+        (implicit or explicit) is found.
+        """
+        return self.__safe_call(self.remote.step_out, t_id)
+    
+    def get_stack(self, t_id):
+        """Return the list of files in the stack for the specifed thread."""
+        return self.__safe_call(self.remote.get_stack, t_id)
+    
+    def set_breakpoint(self, filename, line):
+        """Set a breakpoint in the specifed file and line."""
+        return self.__safe_call(self.remote.set_breakpoint, filename, line)
+        
+    def evaluate(self, t_id, e_str):
+        """
+        Evaluate the expression within the context of the specified debug
+        thread. Since eval only evaluates expressions, a call to this method
+        with an assignment will fail.
+        
+        For a deep understanding of the inner working of this method, see:
+        http://docs.python.org/2/library/functions.html#eval.
+        """
+        return self.__safe_call(self.remote.evaluate, t_id, e_str)
+    
+    def execute(self, t_id, e_str):
+        """
+        Execute an expression within the context of the specified debug thread.
+        
+        For a deep understanding of the inner working of this method, see:
+        http://docs.python.org/2/reference/simple_stmts.html#exec.
+        """
+        return self.__safe_call(self.remote.execute, t_id, e_str)
+        
+    def list_threads(self):
+        """Return the list of active threads on the remote debugger."""
+        return self.__safe_call(self.remote.list_threads)
+    
+    def get_messages(self):
+        """Return the list of available messages on the remote debugger."""
+        return self.__safe_call(self.remote.get_messages)
+    
+    

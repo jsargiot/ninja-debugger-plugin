@@ -12,7 +12,7 @@ import threading
 import time
 import weakref
 
-import debugger_plugin.core.process
+import process
 
 # Debugger internal data
 _IGNORE_FILES = ['threading.py', 'process.py', 'ndb.py', 'serialize.py'
@@ -328,7 +328,7 @@ class Debugger:
             threading.settrace(self.trace_dispatch)
             sys.settrace(self.trace_dispatch)
             # Execute file
-            debugger_plugin.core.process.CodeExecutor(self.s_file).run()
+            process.CodeExecutor(self.s_file).run()
             # UnSet tracing...
             threading.settrace(None)
             sys.settrace(None)
@@ -424,8 +424,8 @@ if __name__ == '__main__':
     # Create debugger object
     dbg = Debugger(sys.argv[0])
     # Start communication interface (RPC) adapter
-    import debugger_plugin.core.rpc_adapter
-    rpcadapter = debugger_plugin.core.rpc_adapter.RPCDebuggerAdapter(dbg)
+    import rpc_adapter
+    rpcadapter = rpc_adapter.RPCDebuggerAdapter(dbg)
     rpcadapter.start()
     # Start debugger
     dbg.run()
