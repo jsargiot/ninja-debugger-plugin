@@ -15,7 +15,7 @@ import weakref
 import process
 
 # Debugger internal data
-_IGNORE_FILES = ['threading.py', 'process.py', 'ndb.py', 'serialize.py'
+_IGNORE_FILES = ['threading.py', 'process.py', 'ndb3.py', 'serialize.py'
                  'weakref.py']
 
 # States
@@ -75,9 +75,9 @@ class DebugMessageFactory:
                  'id': thread_id, }
 
 
-class DebuggerThread:
+class Ndb3Thread:
     """
-    DebuggerThread class represents a Thread in the debugging session. Every
+    Ndb3Thread class represents a Thread in the debugging session. Every
     thread (including MainThread) has a corresponding object. An object of this
     class exposes methods to control its execution.
     """
@@ -89,7 +89,7 @@ class DebuggerThread:
 
     def __init__(self, tid, name, frame, debugger):
         """
-        Create a new DebuggerThread from the starting frame with an id and a
+        Create a new Ndb3Thread from the starting frame with an id and a
         name.
         """
         self._id = tid
@@ -97,7 +97,7 @@ class DebuggerThread:
         self._f_origin = frame
         self._f_current = frame
         self._f_stop = None
-        self._f_cmd = DebuggerThread.CMD_RUN
+        self._f_cmd = Ndb3Thread.CMD_RUN
         self._state = STATE_RUNNING
         self._debugger = debugger
         
@@ -147,19 +147,19 @@ class DebuggerThread:
         if event is 'return':
             # Depending on the kind of command we have, we should check if this
             # is a stopping point. Always return the upper frame on a return.
-            if self._f_cmd is DebuggerThread.CMD_STEP_INTO:
+            if self._f_cmd is Ndb3Thread.CMD_STEP_INTO:
                 self._f_current = frame.f_back
                 return frame.f_back
             
-            stops = [DebuggerThread.CMD_STEP_OVER, DebuggerThread.CMD_STEP_OUT]
+            stops = [Ndb3Thread.CMD_STEP_OVER, Ndb3Thread.CMD_STEP_OUT]
             if self._f_cmd in stops and frame is self._f_stop:
                 self._f_current = frame.f_back
                 return frame.f_back
 
         if event is 'line':
-            if self._f_cmd is DebuggerThread.CMD_STEP_INTO:
+            if self._f_cmd is Ndb3Thread.CMD_STEP_INTO:
                 return frame
-            if self._f_cmd is DebuggerThread.CMD_STEP_OVER:
+            if self._f_cmd is Ndb3Thread.CMD_STEP_OVER:
                 if frame is self._f_stop:
                     return frame
 
@@ -176,11 +176,11 @@ class DebuggerThread:
             time.sleep(0.1)
 
     def name(self):
-        """Return the name of the DebuggerThread."""
+        """Return the name of the Ndb3Thread."""
         return self._name
     
     def state(self):
-        """Return the state of the DebuggerThread."""
+        """Return the state of the Ndb3Thread."""
         return self._state
 
     def stop(self):
@@ -199,26 +199,26 @@ class DebuggerThread:
     def resume(self):
         """Make this thread resume execution after a stop."""
         self._f_stop = None
-        self._f_cmd = DebuggerThread.CMD_RUN
+        self._f_cmd = Ndb3Thread.CMD_RUN
         self._state = STATE_RUNNING
         return self._state
 
     def step_over(self):
         """Stop on the next line in the current frame."""
         self._f_stop = self._f_current
-        self._f_cmd = DebuggerThread.CMD_STEP_OVER
+        self._f_cmd = Ndb3Thread.CMD_STEP_OVER
         self._state = STATE_RUNNING
 
     def step_into(self):
         """Stop execution at the next line of code."""
         self._f_stop = None
-        self._f_cmd = DebuggerThread.CMD_STEP_INTO
+        self._f_cmd = Ndb3Thread.CMD_STEP_INTO
         self._state = STATE_RUNNING
 
     def step_out(self):
         """Stop execution after the return of the current frame."""
         self._f_stop = self._f_current
-        self._f_cmd = DebuggerThread.CMD_STEP_OUT
+        self._f_cmd = Ndb3Thread.CMD_STEP_OUT
         self._state = STATE_RUNNING
 
     def get_stack(self):
@@ -273,15 +273,15 @@ class DebuggerThread:
         return result
 
 
-class Debugger:
+class Ndb3:
     """
-    Debugger Class that manages the debugging session. Allows to stop, resume
+    Ndb3 Class that manages the debugging session. Allows to stop, resume
     and start execution of debugged code.
     """
 
     def __init__(self, s_file, state=STATE_PAUSED):
         """
-        Creates a new Debugger. By default the debugger will start paused
+        Creates a new Ndb3 debugger. By default the debugger will start paused
         and waiting to be set on running.
         """
         self.s_file = s_file
@@ -342,7 +342,7 @@ class Debugger:
 
     def trace_dispatch(self, frame, event, arg):
         """
-        Initial trace method. Create the DebuggerThread if it's a new thread
+        Initial trace method. Create the Ndb3Thread if it's a new thread
         or detour the trace to the corresponding thread.
         """
         if self._state == STATE_TERMINATED:
@@ -359,7 +359,7 @@ class Debugger:
         t_id = threading.currentThread().ident
         if not t_id in self._threads:
             t_name = threading.currentThread().name
-            self._threads[t_id] = DebuggerThread(t_id, t_name, frame, self)
+            self._threads[t_id] = Ndb3Thread(t_id, t_name, frame, self)
         else:
             # Redirect the trace to the thread's method
             return self._threads[t_id].trace_dispatch
@@ -422,7 +422,7 @@ if __name__ == '__main__':
     # Remove ourselves from the argv. (Try to be transparent to the script).
     del sys.argv[0]
     # Create debugger object
-    dbg = Debugger(sys.argv[0])
+    dbg = Ndb3(sys.argv[0])
     # Start communication interface (RPC) adapter
     import rpc_adapter
     rpcadapter = rpc_adapter.RPCDebuggerAdapter(dbg)

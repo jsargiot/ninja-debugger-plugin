@@ -162,9 +162,9 @@ class RPCDebuggerAdapterClient:
     
     By default, the client will try to connect to localhost.
 
-       +-------------+               +------------+          +------------+
-       |  RPCClient  |+------------->| RPCAdapter |--------->|  Debugger  |
-       +-------------+    (RPC)      +------------+          +------------+
+       +-------------+               +------------+          +--------+
+       |  RPCClient  |+------------->| RPCAdapter |--------->|  Ndb3  |
+       +-------------+    (RPC)      +------------+          +--------+
 
     """
 

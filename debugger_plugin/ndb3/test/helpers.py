@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 *-*
 
-import ndb
+import ndb3
 
-class MockDebugger(ndb.Debugger):
+class MockDebugger(ndb3.Ndb3):
 
     def __init__(self):
-        ndb.Debugger.__init__(self, 'mock.py')
+        ndb3.Ndb3.__init__(self, 'mock.py')
 
     def run(self):
         # bla bla debugging
-        self._state = ndb.STATE_TERMINATED
+        self._state = ndb3.STATE_TERMINATED
