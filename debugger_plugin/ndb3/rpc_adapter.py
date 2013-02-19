@@ -6,6 +6,7 @@ This module provides RPC interaction with the debugger.
 
 import logging
 from SimpleXMLRPCServer import SimpleXMLRPCServer
+import socket
 import threading
 import xmlrpclib
 
@@ -117,7 +118,7 @@ class RPCDebuggerAdapter(threading.Thread, SimpleXMLRPCServer):
     def export_set_breakpoint(self, filename, line):
         """Set the specified line in filename as a breakpoint."""
         self._debugger.set_breakpoint(filename, line)
-        return (file, line)
+        return (filename, line)
 
     def export_evaluate(self, t_id, e_str):
         """
