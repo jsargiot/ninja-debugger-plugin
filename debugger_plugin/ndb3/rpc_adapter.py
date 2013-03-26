@@ -13,6 +13,10 @@ import xmlrpclib
 import serialize
 
 
+class DebuggerConnectionError(Exception):
+    pass
+
+
 class RPCDebuggerAdapter(threading.Thread, SimpleXMLRPCServer):
     """
     Adapter class that receives input from a RPC-channel and routes those

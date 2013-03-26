@@ -15,7 +15,7 @@ import weakref
 import process
 
 # Debugger internal data
-_IGNORE_FILES = ['threading.py', 'process.py', 'ndb3.py', 'serialize.py'
+_IGNORE_FILES = ['threading.py', 'process.py', 'ndb3.py', 'serialize.py',
                  'weakref.py']
 
 # States
@@ -43,13 +43,16 @@ class DebugMessageFactory:
         return {'type': DebugMessageFactory.MSG_NOP, }
     
     @staticmethod
-    def make_thread_started(thread_id):
+    def make_thread_started(thread_id, thread_name):
         """
         Return a message with information about the thread that started its
         execution.
         """
-        return { 'type': DebugMessageFactory.MSG_THREAD_STARTED,
-                 'id': thread_id, }
+        return {
+                'type': DebugMessageFactory.MSG_THREAD_STARTED,
+                'id': thread_id,
+                'name': thread_name
+               }
     
     @staticmethod
     def make_thread_suspended(thread_id, frame):
@@ -60,10 +63,12 @@ class DebugMessageFactory:
         f_path = frame.f_code.co_filename
         f_line = frame.f_lineno
         
-        return { 'type': DebugMessageFactory.MSG_THREAD_SUSPENDED,
-                 'id': thread_id,
-                 'file': f_path,
-                 'line':f_line }
+        return {
+                'type': DebugMessageFactory.MSG_THREAD_SUSPENDED,
+                'id': thread_id,
+                'file': f_path,
+                'line':f_line,
+               }
     
     @staticmethod
     def make_thread_ended(thread_id):
@@ -71,8 +76,10 @@ class DebugMessageFactory:
         Return a message with information about the thread that is ending its
         execution.
         """
-        return { 'type': DebugMessageFactory.MSG_THREAD_ENDED,
-                 'id': thread_id, }
+        return {
+                'type': DebugMessageFactory.MSG_THREAD_ENDED,
+                'id': thread_id,
+               }
 
 
 class Ndb3Thread:
@@ -102,7 +109,7 @@ class Ndb3Thread:
         self._debugger = debugger
         
         # Notify about this thread being created
-        msg = DebugMessageFactory.make_thread_started(self._id)
+        msg = DebugMessageFactory.make_thread_started(self._id, self._name)
         self._debugger.put_message(msg)
 
         # Trace frame
@@ -186,8 +193,9 @@ class Ndb3Thread:
     def stop(self):
         """Make the current thread stop executing."""
         # Notify about this thread being terminated.
-        msg = DebugMessageFactory.make_thread_ended(self._id)
-        self._debugger.put_message(msg)
+        if self._f_origin:
+            msg = DebugMessageFactory.make_thread_ended(self._id)
+            self._debugger.put_message(msg)
             
         self._f_origin = None
         self._f_current = None # Release current frame
@@ -228,7 +236,7 @@ class Ndb3Thread:
         """
         stack = []
         # Add all frames in the stack to the result
-        index_f = self._f_current()
+        index_f = self._f_current
         while index_f is not None:
             f_name = os.path.basename(index_f.f_code.co_filename)
             f_line = index_f.f_lineno
