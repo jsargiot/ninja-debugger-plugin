@@ -25,6 +25,10 @@ STATE_PAUSED = "STATE_PAUSED"
 STATE_TERMINATED = "STATE_TERMINATED"
 
 
+class DebugEndError(Exception):
+    pass
+
+
 class DebugMessageFactory:
     """Factory class to create debugger messages."""
 
@@ -126,6 +130,8 @@ class Ndb3Thread:
             self.stop()
         
         if self._state == STATE_TERMINATED:
+            #XXX: Need improvement, exception goes to the output.
+            #raise DebugEndError("Se termino")
             return None
 
         # Set current frame
@@ -295,7 +301,7 @@ class Ndb3:
         self.s_file = s_file
         self._threads = weakref.WeakValueDictionary()
         self._messages = Queue.Queue()
-        self._breakpoints = dict()      # _breakpoints[filename] = [line1, ...]
+        self._breakpoints = {}      # _breakpoints[filename] = [line1, ...]
         self._state = state
 
     def start(self):
@@ -343,6 +349,8 @@ class Ndb3:
             # Wait for all threads to finish.
             while len(self._threads) > 0:
                 time.sleep(0.1)
+        except DebugEndError:
+            pass
         finally:
             threading.settrace(None)
             sys.settrace(None)
@@ -410,6 +418,20 @@ class Ndb3:
         lines = self._breakpoints.setdefault(fullpath, [])
         if not line in lines:
             lines.append(line)
+    
+    def clear_breakpoints(self, filename = None):
+        """
+        Clear the registry of breakpoints for a specified file, if not
+        specified, clear all breakpoints.
+        """
+        if filename:
+            try:
+                del self._breakpoints[filename]
+            except:
+                # Ignore if filename wasn't there in the first place
+                pass
+        else:
+            self._breakpoints = {}
 
     def is_breakpoint(self, filename, line):
         """

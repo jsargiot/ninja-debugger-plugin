@@ -31,7 +31,9 @@ class RPCDebuggerAdapter(threading.Thread, SimpleXMLRPCServer):
         to interact with the debugger through XML-RPC.
         """
         threading.Thread.__init__(self, name="RPCDebuggerAdapter")
-        SimpleXMLRPCServer.__init__(self, ("", 8765), logRequests=False)
+        SimpleXMLRPCServer.__init__(self, ("", 8765),
+                                    logRequests=False,
+                                    allow_none=True)
 
         self.logger = logging.getLogger(__name__)
         self._quit = False
@@ -123,15 +125,20 @@ class RPCDebuggerAdapter(threading.Thread, SimpleXMLRPCServer):
         """Set the specified line in filename as a breakpoint."""
         self._debugger.set_breakpoint(filename, line)
         return (filename, line)
+    
+    def export_clear_breakpoints(self, filename = None):
+        """Clear breakpoints for a specified filename."""
+        self._debugger.clear_breakpoints(filename)
+        return "OK"
 
-    def export_evaluate(self, t_id, e_str):
+    def export_evaluate(self, t_id, e_str, depth = 1):
         """
         Evaluate e_str in the context of the globals and locals from
         the execution frame in the specified thread.
         """
         t_obj = self._debugger.get_thread(t_id)
         result = t_obj.evaluate(e_str)
-        return serialize.serialize(e_str, e_str, result)
+        return serialize.serialize(e_str, e_str, result, depth=depth)
 
     def export_execute(self, t_id, e_str):
         """
@@ -274,8 +281,12 @@ class RPCDebuggerAdapterClient:
     def set_breakpoint(self, filename, line):
         """Set a breakpoint in the specifed file and line."""
         return self.__safe_call(self.remote.set_breakpoint, filename, line)
+    
+    def clear_breakpoints(self, filename = None):
+        """Clear all breakpoints for a specified filename."""
+        return self.__safe_call(self.remote.clear_breakpoints, filename)
         
-    def evaluate(self, t_id, e_str):
+    def evaluate(self, t_id, e_str, depth = 1):
         """
         Evaluate the expression within the context of the specified debug
         thread. Since eval only evaluates expressions, a call to this method
@@ -284,7 +295,7 @@ class RPCDebuggerAdapterClient:
         For a deep understanding of the inner working of this method, see:
         http://docs.python.org/2/library/functions.html#eval.
         """
-        return self.__safe_call(self.remote.evaluate, t_id, e_str)
+        return self.__safe_call(self.remote.evaluate, t_id, e_str, depth)
     
     def execute(self, t_id, e_str):
         """
