@@ -1,15 +1,16 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 *-*
-'''
+"""
     Debugger plugin for Ninja-IDE.
-'''
+"""
 
 import os
 import time
 import logging
 
-from ninja_ide.core import plugin
-from ninja_ide.core import settings
+import ninja_ide.gui
+import ninja_ide.core.plugin
+import ninja_ide.core.settings
 
 from PyQt4.QtCore import SIGNAL
 from PyQt4.QtCore import Qt
@@ -17,395 +18,458 @@ from PyQt4.QtCore import pyqtSignal
 from PyQt4.QtCore import QPoint
 from PyQt4.QtCore import QProcess
 from PyQt4.QtCore import QThread
+from PyQt4.QtGui import QIcon
+from PyQt4.QtGui import QMenu
 from PyQt4.QtGui import QAction
 from PyQt4.QtGui import QToolTip
+from PyQt4.QtGui import QTabWidget
 from PyQt4.QtGui import QMessageBox
 from PyQt4.QtGui import QTextBlockFormat
 
-from ndb import DebuggerMaster
-from gui import resources
-from gui import watches
-import symbols
+import debugger_plugin.core.models
+import debugger_plugin.gui.resources
+import debugger_plugin.gui.threads
+import debugger_plugin.gui.watches
+import debugger_plugin.gui.providers
 
-_logger = logging.getLogger("ninja_debugger")
+import ndb3.rpc_adapter
 
 
-class Debugger(plugin.Plugin):
-    '''
+class DebugPlugin(ninja_ide.core.plugin.Plugin):
+    """
     Plugin that enables debugging scripts for Ninja-IDE.
-    '''
-    line_focus_format = QTextBlockFormat()
-    line_clear_format = QTextBlockFormat()
-
+    """
+    instance = None
+    
     def initialize(self):
-        '''
-        Inicializes the Debugger user interface and creates an instance of
-        the debugger client.
-        '''
+        """
+        Inicializes the DebugPlugin.
+        """
+        DebugPlugin.instance = self
+        
+        self.logger.info("Initializing plugin.")
+        
+        # Basic services
+        self.ide = ninja_ide.gui.ide.IDE()
         self.editor = self.locator.get_service('editor')
         self.toolbar = self.locator.get_service('toolbar')
         self.menuApp = self.locator.get_service('menuApp')
         self.misc = self.locator.get_service('misc')
+        self.explorer = self.locator.get_service('explorer')
+        
+        # Debug attributes
+        self.debugger_script = os.path.join(self.path, "ndb3", "ndb3.py")
+        self.debugger_adapter = ndb3.rpc_adapter.RPCDebuggerAdapterClient()
+        
+        # Breakpoints
+        self._breakpoints = {}
+        
+        # UI
+        self._create_toolbar()
+        self.threadsView = None
+        
+        self.logger.info("Successfully initialized")
+    
+    def finish(self):
+        """Shuts down the plugin and the debugger client."""
+        # Stop debugger if it's running.
+        self.debugger_adapter.stop()
 
-        self.toolbar_btns = {}
-        self.debugger = DebuggerMaster()
-        self.prev_cursor = None
-        self.__prepare_ui()
+    #
+    # Actions
+    #
+    
+    def debug_start(self, fn_run):
+        """
+        Start the debugging session. The specified function launches the
+        debugging script.
+        """
+        try:
+            # Check that there is no other instance running
+            if self.debugger_adapter.connect(retries=1):
+                # Kill previous session
+                self.debugger_adapter.stop()
+        except:
+            pass
+        
+        self.logger.info("Session start.")
+        # Activate the UI elements (watches widget, threads, etc)
+        self._activate_ui()
+        try:
+            # Set execution options for this session.
+            exec_opts = ninja_ide.core.settings.EXECUTION_OPTIONS
+            ninja_ide.core.settings.EXECUTION_OPTIONS = "{0}".format(self.debugger_script)
+            # Run project
+            fn_run()
+            # Wait for the debugger to start
+            time.sleep(1)
+            if self.debugger_adapter.connect(retries=3):
+                # Clear ALL breakpoints before setting new ones.
+                self.debugger_adapter.clear_breakpoints('')
+                
+                # Set all breakpoints currently in the editor
+                for b, ls in ninja_ide.core.settings.BREAKPOINTS.items():
+                    for l in ls:
+                        # Add one to line number since the editor's line index
+                        # starts at zero(0), while the debugger's index starts
+                        # at one(1).
+                        self.logger.debug("Breakpoint {0}:{1}".format(b, l))
+                        self.debugger_adapter.set_breakpoint(b, l + 1)
+                
+                # Activate buttons
+                self._activate_debug_actions(True)
+                
+                # Start event monitor
+                self.monitor = EventWatcher(self.debugger_adapter.get_messages)
+                self.monitor.newEvent.connect(self.process_event)
+                self.monitor.start()
 
-        _logger.info("Debugger plugin successfully initialized")
+                # Start debugger
+                self.debugger_adapter.start()
+            else:
+                QMessageBox.information(self.editor.get_editor(),
+                     "Error when starting debugger",
+                     "The debugger could not be started")
+        finally:
+            # Restore execution options
+            ninja_ide.core.settings.EXECUTION_OPTIONS = exec_opts
+        self.logger.info("Session ended.")
 
-    def __prepare_ui(self):
-        '''
-        Creates and sets up the ui elements of the plugin. The ui includes
-        a toolbar with the buttons to control de debugging session and a widget
-        in the misc section to add watches.
-        '''
-        # Add toolbar
-        self.__create_toolbar()
+    def update_breakpoints(self):
+        """Set the breakpoints currently active in the debugger."""
+        if not self.debugger_adapter.is_alive():
+            return
 
-        # Add watches widget
-        self.watches_widget = watches.WatchesWidget()
-        self.misc.add_widget(self.watches_widget, resources.RES_ICON_WATCHES, "Watch expressions")
-        self.watches_widget.itemChanged.connect(self.__evaluate_item)
+    def _move_editor_focus(self, file, line):
+        """
+        """
+        # Check if the file we're getting is on the editor
+        if os.path.isfile(file):
+            # It's a file, let's open it
+            self.editor.open_file(file)
+        # TODO: Get tab with the filename
+        if line > 0:
+            editor = self.editor.get_editor()
+            editor.jump_to_line(line - 1)
+            editor.setFocus()
+    
+    def _activate_debug_actions(self, activate = True):
+        """
+        Modifies the state of all the debugger actions. Also, changes the
+        status of the start button to the oposite of the rest.
+        """
+        # Start is always backward from the other buttons
+        self._btn_debug_file.setDisabled(activate)
+        self._btn_debug_project.setDisabled(activate)
 
-        # Set background color for current line
-        self.line_focus_format.setBackground(Qt.yellow)
+        # Set the activate for the rest of the buttons
+        self._btn_cont.setDisabled(not activate)
+        self._btn_stop.setDisabled(not activate)
+        self._btn_into.setDisabled(not activate)
+        self._btn_over.setDisabled(not activate)
+        self._btn_out.setDisabled(not activate)
+    
+    #
+    # Slots
+    #
+    
+    def debug_project(self):
+        """Start the debugging session of the main project file."""
+        self.debug_start(self.ide.actions.execute_project)
+    
+    def debug_file(self):
+        """Start the debugging session of the current file in the editor."""
+        self.debug_start(self.ide.actions.execute_file)
+    
+    def select_thread(self):
+        """
+        Executed when an item in the threadview list is clicked. Can be
+        a thread, or a stacktrace item.
+        """
+        stack = None
+        tid = self.get_active_thread()
+        if tid:
+            stack = self.threads_model.get(tid).epointer
+        if stack:
+            self._move_editor_focus(stack.filename, stack.linenumber)
+            self.watchesWidget.view.update()
+        else:
+            self._move_editor_focus("<nofile>", -1)
+    
+    #
+    # User interface
+    #
+    
+    def _activate_ui(self):
+        """Creates and sets up the ui elements of the plugin."""
 
-    def __create_toolbar(self):
-        '''
-        Creates the toolbar to control the debugger. Add the icons and
+        # Model for Threads
+        self.threads_model = debugger_plugin.core.models.ThreadGroup("Debug Session")
+        
+        # View for Threads
+        self.threadsView = debugger_plugin.gui.threads.ThreadsView()
+        self.threadsView.setContentProvider(debugger_plugin.gui.providers.ThreadsContentProvider())
+        self.threadsView.setLabelProvider(debugger_plugin.gui.providers.ThreadsLabelProvider())
+        self.threadsView.setInput(self.threads_model)
+        
+        #self.connect(self.threadsView, SIGNAL("itemClicked(QTreeWidgetItem*, int)"), self.select_thread)
+        self.connect(self.threadsView, SIGNAL("itemSelectionChanged()"), self.select_thread)
+        
+        # Expand top level item
+        a = self.threadsView.topLevelItem(0)
+        self.threadsView.expandItem(a)
+        
+        # Watches Widget
+        self.watchesWidget = debugger_plugin.gui.watches.WatchesWidget()
+        self.watchesWidget.itemChanged.connect(self.reevaluate_watch)
+        
+        # Save current widget before debug starts (to restore it later)
+        self._old_active_widget_widget = self.explorer._explorer.currentWidget()
+        
+        # Configure tabs in explorer
+        self.tabWidget = QTabWidget()
+        self.tabWidget.addTab(self.threadsView, "Threads")
+        self.tabWidget.addTab(self.watchesWidget, "Watches")
+        self.explorer.add_tab(self.tabWidget, "Debug")
+        self.explorer._explorer.setCurrentWidget(self.tabWidget)
+    
+    def _deactivate_ui(self):
+        """Remove all the debugging ui elements from the editor."""
+        # Restore active widget on explorer container
+        self.explorer._explorer.setCurrentWidget(self._old_active_widget_widget)
+        # Remove threads container
+        self.explorer._explorer.removeTab(self.explorer._explorer.indexOf(self.tabWidget))
+    
+    def _create_toolbar(self):
+        """
+        Creates the toolbar to control the DebugPlugin. Add the icons and
         the actions in a disabled state.
-        '''
-        self._btn_start = QAction(resources.RES_ICON_START, resources.RES_STR_DEBUG_FILE_START, self)
-        self._btn_stop = QAction(resources.RES_ICON_STOP, resources.RES_STR_DEBUG_STOP, self)
-        self._btn_cont = QAction(resources.RES_ICON_CONT, resources.RES_STR_DEBUG_CONTINUE, self)
-        self._btn_into = QAction(resources.RES_ICON_INTO,resources.RES_STR_DEBUG_STEPINTO, self)
-        self._btn_over = QAction(resources.RES_ICON_OVER,resources.RES_STR_DEBUG_STEPOVER, self)
-        self._btn_out = QAction(resources.RES_ICON_OUT, resources.RES_STR_DEBUG_STEPOUT, self)
-
-        self.connect(self._btn_start, SIGNAL('triggered()'), self.debug_start)
-        self.connect(self._btn_cont, SIGNAL('triggered()'), self.debug_cont)
+        """
+        # Debug Project
+        self._btn_debug_project = QAction(QIcon(debugger_plugin.gui.resources.RES_ICON_START),
+                                  debugger_plugin.gui.resources.RES_STR_DEBUG_PROJECT_START,
+                                  self)
+        self.connect(self._btn_debug_project, SIGNAL('triggered()'), self.debug_project)
+        
+        # Debug File
+        self._btn_debug_file = QAction(QIcon(debugger_plugin.gui.resources.RES_ICON_START),
+                                  debugger_plugin.gui.resources.RES_STR_DEBUG_FILE_START,
+                                  self)
+        self.connect(self._btn_debug_file, SIGNAL('triggered()'), self.debug_file)
+        
+        # Stop debug session
+        self._btn_stop = QAction(QIcon(debugger_plugin.gui.resources.RES_ICON_STOP),
+                                 debugger_plugin.gui.resources.RES_STR_DEBUG_STOP,
+                                 self)
         self.connect(self._btn_stop, SIGNAL('triggered()'), self.debug_stop)
+        
+        # Continue
+        self._btn_cont = QAction(QIcon(debugger_plugin.gui.resources.RES_ICON_CONT),
+                                 debugger_plugin.gui.resources.RES_STR_DEBUG_CONTINUE,
+                                 self)
+        self.connect(self._btn_cont, SIGNAL('triggered()'), self.debug_cont)
+        
+        # Step into
+        self._btn_into = QAction(QIcon(debugger_plugin.gui.resources.RES_ICON_INTO),
+                                 debugger_plugin.gui.resources.RES_STR_DEBUG_STEPINTO,
+                                 self)
         self.connect(self._btn_into, SIGNAL('triggered()'), self.debug_into)
+        
+        # Step over
+        self._btn_over = QAction(QIcon(debugger_plugin.gui.resources.RES_ICON_OVER),
+                                 debugger_plugin.gui.resources.RES_STR_DEBUG_STEPOVER,
+                                 self)
         self.connect(self._btn_over, SIGNAL('triggered()'), self.debug_over)
+        
+        # Step out
+        self._btn_out = QAction(QIcon(debugger_plugin.gui.resources.RES_ICON_OUT),
+                                debugger_plugin.gui.resources.RES_STR_DEBUG_STEPOUT,
+                                self)
         self.connect(self._btn_out, SIGNAL('triggered()'), self.debug_out)
 
         # Add start button to menu
-        self.menuApp.add_action(self._btn_start)
+        menu = QMenu("Debug", self.menuApp._plugins_menu)
+        menu.addAction(self._btn_debug_file)
+        menu.addAction(self._btn_debug_project)
+        menu.addSeparator()
+        menu.addAction(self._btn_cont)
+        menu.addAction(self._btn_stop)
+        menu.addAction(self._btn_into)
+        menu.addAction(self._btn_over)
+        menu.addAction(self._btn_out)
+        
+        # Add Menu
+        self.menuApp.add_menu(menu)
+        
         # Add buttons to toolbar
         self.toolbar.add_action(self._btn_cont)
         self.toolbar.add_action(self._btn_stop)
         self.toolbar.add_action(self._btn_into)
         self.toolbar.add_action(self._btn_over)
         self.toolbar.add_action(self._btn_out)
+        
         # Start disabled
-        self.__set_disabled_toolbar(True)
+        self._activate_debug_actions(False)
+        
+    #
+    # Events management
+    #
 
-    def __set_disabled_toolbar(self, state):
-        '''
-        Modifies the state of all the buttons in the toolbar. Also, changes the
-        status of the start button to the oposite of the toolbar.
+    def process_event(self, event):
+        """Method to process events from the EventWatcher."""
+        print repr(event)
+        self.logger.debug("Processing event: ({0})".format(repr(event)))
 
-        When the toolbar is disabled, the start button is enabled and the other
-        way around.
-        '''
-        # Start is always backward from the other buttons
-        self._btn_start.setDisabled(not state)
+        # MSG_THREAD_STARTED = 0x02
+        if event['type'] == 2:
+            # New thread
+            tid = event['id']
+            item = debugger_plugin.core.models.ThreadModel(tid, event['name'], debugger_plugin.core.models.ThreadModel.RUNNING)
+            self.threads_model.add(tid, item)
+            self.threadsView.update(self.threads_model, True)
+        
+        # MSG_THREAD_SUSPENDED = 0x03
+        if event['type'] == 3:
+            tid = event['id']
+            tfile = event['file']
+            tline = event['line']
+            tobj = self.threads_model.get(tid)
+            tobj.state = debugger_plugin.core.models.ThreadModel.PAUSED
+            st_trace = debugger_plugin.core.models.ThreadStackEntry(tfile, tline)
+            tobj.epointer = st_trace
+            self.threadsView.update(tobj, True)
+            # Update threads
+            self.select_thread()
+        
+        # MSG_THREAD_ENDED = 0x04
+        if event['type'] == 4:
+            # Thread died
+            tid = event['id']
+            if self.threads_model.get(tid):
+                self.threads_model.remove(tid)
+            self.threadsView.update(self.threads_model, True)
 
-        # Set the state for the rest of the buttons
-        self._btn_cont.setDisabled(state)
-        self._btn_stop.setDisabled(state)
-        self._btn_into.setDisabled(state)
-        self._btn_over.setDisabled(state)
-        self._btn_out.setDisabled(state)
+        # MSG_THREAD_RESUMED = 0x05
+        if event['type'] == 5:
+            # Thread resumed
+            tid = event['id']
+            t = self.threads_model.get(tid)
+            t.state = debugger_plugin.core.models.ThreadModel.RUNNING
+            self.threadsView.update(t, True)
+    
+    #
+    # Threads management
+    #
+    
+    def get_active_thread(self):
+        """
+        Return the currently selected thread in threadview.
+        """
+        thread_id = None
+        selected = (self.threadsView and self.threadsView.selectedItems()) or None
+        if selected:
+            item = selected.pop()
+            
+            if isinstance(item.data, debugger_plugin.core.models.ThreadModel):
+                thread_id = item.data.ident
+        return thread_id
 
-    def __evaluate_item(self, item, column):
-        '''
-        Re-evaluates the expression of an item in the watches list. This method
-        deletes an item if the expression is empty (""). If the value of the
-        expression (a.k.a column=2 changed) tries to assign the new value to
-        the expression.
-        '''
-        item_text = str(item.text(0))
-        item_value = str(item.text(2))
-
-        _logger.debug("Evaluate item: ({0}; {1})".format(item_text, item_value))
-
-        if (item_text == ""):
-            self.watches_widget.remove_item(item)
-            return
-
-        # Update expression
-        item.expression = item_text
-
-        if column == 2:
-            # Value changed
-            if self.debugger.is_alive():
-                self.debugger.debug_exec(item.expression + " = " + item_value)
-
-        # Remove all children from this item since we are going
-        # to recalculate all of them
-        item.takeChildren()
-
-        # Evaluate expression
-        result = self.debugger.debug_eval(item_text)
-
-        # Set results on item
-        item.setText(1, result['type'])
-        item.setText(2, result['repr'])
-        for child_item in result['childs']:
-            self.add_item(child_item['name'], child_item, child_item['expr'],
-                           child_item['type'], child_item['repr'])
-
-    def __start_monitor(self):
-        '''
-        Start thread to monitor events from the debugger.
-        '''
-        self.monitor = EventWatcher(self.debugger)
-        self.monitor.newEvent.connect(self.__process_event)
-        self.monitor.start()
-
-    def __stop_monitor(self):
-        '''
-        Stops the thread to monitor events from the debugger.
-        '''
-        self.monitor.quit()
-        self.monitor.wait()
-
-    def __process_event(self, event):
-        '''
-        Method to process events from the EventWatcher.
-        '''
-        _logger.debug("Processing event: ({0})".format(repr(event)))
-
-        if 'file' in event and 'line' in event:
-            self.__step_on_line(event['file'], event['line'])
-
-        if 'event' in event and event['event'] == 'EOF':
-            self.debug_stop()
-
-        if 'event' in event and event['event'] == 'user_exception':
-            self.__exception(event['file'], event['line'], event['exc_type'],
-                                        repr(event['exc_value']))
-
-    def __refresh_output(self):
-        '''
-        Read the output buffer from the process and append the text.
-        '''
-        text = self.run_process.readAllStandardOutput().data().decode('utf8')
-        runWidget = self.misc._misc._runWidget
-        outputWidget = runWidget.output
-        cursor = outputWidget.textCursor()
-        cursor.setBlockFormat(self.line_clear_format)
-        cursor.insertText(text)
-
-    def __step_on_line(self, file, line):
-        '''
-        Method executed when the debugger stops on a line.
-        '''
-        # Unmark previous line
-        if self.prev_cursor is not None:
-            self.prev_cursor.setBlockFormat(self.line_clear_format)
-
-        # Check if the file we're getting is on the editor
-        if os.path.isfile(file):
-            # It's a file, let's open it
-            self.editor.open_file(file)
+    #
+    # Debugger commands
+    #
+    
+    def debug_cont(self):
+        """Sends a command to the debugger to execute a continue."""
+        # Check if we have selected a thread in the ThreadsView and
+        # resume only that thread.
+        thread_id = self.get_active_thread()
+        
+        if thread_id:
+            # Resume just the selected thread
+            self.debugger_adapter.resume(thread_id)
         else:
-            self.debugger.debug_continue()
-            return
-
-        # TODO: Get tab with the filename
-        if line > 0:
-            # Mark the current line
-            editor = self.editor.get_editor()
-            editor.jump_to_line(line - 1)
-            cursor = editor.textCursor()
-            cursor.setBlockFormat(self.line_focus_format)
-            editor.textModified = False
-            self.prev_cursor = cursor
-
-        # Re-evaluate all items
-        item_list = self.watches_widget.get_all_items()
-        for item in item_list:
-            self.__evaluate_item(item, 0)
-
-    def __exception(self, file, line, exc_type, exc_value):
-        '''
-        This method is executed when an exception is encountered.
-        '''
-        message = "Exception %(type)s: %(msg)s\nAt Line: %(line)s" % {
-                        'type': exc_type, 'msg': exc_value, 'line': line}
-        QToolTip.showText(QPoint(250, 250), message)
-
-    def __install_mouse_handler(self):
-        '''
-        Installs a new mouse event handler for the ninja-ide. The new handler
-        observers the position and evaluates any symbol under the mouse cursor
-        and show its value. Doesn't remove old behavior, it just execute it
-        after the custom handler is done.
-        '''
-        filepath = self.editor.get_editor_path()
-        editor_widget = self.editor.get_editor()
-        self.sym_finder = dict()
-        self.sym_finder[filepath] = symbols.SymbolFinder(filepath)
-
-        # Save old mouse event
-        self.__old_mouse_event = editor_widget.mouseMoveEvent
-        # New custom mouse handler
-        def custom_mouse_movement(event):
-            try:
-                pos = event.pos()
-                c = editor_widget.cursorForPosition(pos)
-                sym = self.sym_finder[filepath].get(c.blockNumber()+1,
-                                                    c.columnNumber())
-                if sym is not None:
-                    result = self.debugger.debug_eval(sym.expression)
-                    content = "{exp} = ({type}) {value}".format(
-                                    exp=sym.expression, type=result['type'],
-                                    value=result['repr'])
-                    QToolTip.showText(editor_widget.mapToGlobal(pos), content)
-            finally:
-                self.__old_mouse_event(event)
-        # Install new event handler
-        self.editor.get_editor().mouseMoveEvent = custom_mouse_movement
-
-    def __uninstall_mouse_handler(self):
-        '''
-        Removes the custom mouse event handler from the ninja-ide. Restores
-        the mouse event handler to its previous state.
-        '''
-        self.editor.get_editor().mouseMoveEvent = self.__old_mouse_event
-
-    def debug_start(self):
-        '''
-        Starts the debugging session.
-        '''
-        _logger.info("Starting debug session")
-
-        filepath = self.editor.get_editor_path()
-        interpreter = settings.PYTHON_PATH
-        debugger_py = os.path.join(os.path.dirname(__file__), 'ndb.py')
-
-        self.run_process = QProcess()
-        self.connect(self.run_process, SIGNAL("readyReadStandardOutput()"),
-                self.__refresh_output)
-
-        # Create process call by adding -u to the arg list to avoid
-        # readyReadStandardOutput singal only being emitted on process end.
-        self.run_process.start(interpreter, ["-u", debugger_py, filepath])
-        if not self.run_process.waitForStarted():
-            return False
-
-        if not self.debugger.connect(attemps=3):
-            QMessageBox.information(self.editor.get_editor(),
-                    "Error when starting debugger",
-                    "The debugger could not be started")
-            return
-
-        # Enable toolbar buttons
-        self.__set_disabled_toolbar(False)
-
-        # Set all breakpoints currently in the editor
-        for b, ls in settings.BREAKPOINTS.items():
-            for l in ls:
-                # Add one to line number since the editor's line index starts
-                # at zero(0), while the debugger's index starts at one(1).
-                _logger.debug("Adding breakpoint {0}:{1}".format(b, l))
-                self.debugger.set_break(b, l + 1)
-
-        # Start monitoring of events
-        self.__start_monitor()
-
-        # Install custom mouse handler for debug session
-        self.__install_mouse_handler()
+            # If no thread selected, resume all
+            self.debugger_adapter.resume_all()
 
     def debug_stop(self):
-        '''
-        Stops the debugger and ends the debugging session.
-        '''
-        # Unmark current line
-        self.__step_on_line("", -1)
-
-        self.__stop_monitor()
-        self.debugger.debug_stop()
-
-        self.run_process.waitForFinished()
-        self.__set_disabled_toolbar(True)
-
-        # Restore old mouse event handler
-        self.__uninstall_mouse_handler()
-
-        _logger.info("Ending debug session")
+        """Stops the debugger and ends the debugging session."""
+        try:
+            self.debugger_adapter.stop()
+        except ndb3.rpc_adapter.DebuggerConnectionError:
+            pass
+        self._activate_debug_actions(False)
+        self._deactivate_ui()
 
     def debug_over(self):
-        '''
-        Sends a command to the debugger to execute a step over.
-        '''
-        self.debugger.debug_over()
+        """Sends a command to the debugger to execute a step over."""
+        thread_id = self.get_active_thread()
+        if thread_id:
+            # Step just the selected thread
+            self.debugger_adapter.step_over(thread_id)
 
     def debug_into(self):
-        '''
-        Sends a command to the debugger to execute a step into.
-        '''
-        self.debugger.debug_into()
+        """Sends a command to the debugger to execute a step into."""
+        thread_id = self.get_active_thread()
+        if thread_id:
+            # Step just the selected thread
+            self.debugger_adapter.step_into(thread_id)
 
     def debug_out(self):
-        '''
-        Sends a command to the debugger to execute a step out.
-        '''
-        self.debugger.debug_out()
-
-    def debug_cont(self):
-        '''
-        Sends a command to the debugger to execute a continue.
-        '''
-        self.debugger.debug_continue()
-
-    def finish(self):
-        '''
-        Shuts down the plugin and the debugger client.
-        '''
-        # Stop plugin
-        self.debugger.debug_stop()
+        """Sends a command to the debugger to execute a step out."""
+        thread_id = self.get_active_thread()
+        if thread_id:
+            # Step just the selected thread
+            self.debugger_adapter.step_out(thread_id)
+    
+    def reevaluate_watch(self, watch):
+        """Evaluate the watch in the context of the selected thread."""
+        thread_id = self.get_active_thread()
+        watch.value = '<Cannot evaluate>'
+        if thread_id:
+            # Evaluate watch
+            ret = self.debugger_adapter.evaluate(thread_id,
+                                                 watch.expression,
+                                                 depth=0)
+            watch.type = ret['type']
+            watch.value = ret['value']
 
 
 class EventWatcher(QThread):
-    '''
+    """
     An object of this class allows to monitor a DebuggerSlave. The object will
     poll continuously for events thru the DebuggerMaster. If an event appears a
     signal will be triggered.
-    '''
+    """
     newEvent = pyqtSignal(dict, name="newEvent(PyQt_PyObject)")
 
-    def __init__(self, debugger):
-        '''
-        Initializes the EventWatcher.
-        '''
+    def __init__(self, get_messages_fn):
+        """Initializes the EventWatcher."""
         QThread.__init__(self)
         self.__state = "stopped"
-        self.debugger = debugger
+        self.fn = get_messages_fn
+        self.logger = logging.getLogger(__name__)
 
     def run(self):
-        '''
+        """
         Starts the cycle of checking for events from the debugger. Every time
         a new event is found, the newEvent signal is emitted.
-        '''
-        _logger.info("Starting event watcher")
-        self.__state = "running"
-        while self.__state == "running":
-            # If the next call raises an exception, do I really want to go on?
-            events = self.debugger.get_events()
-            for e in events:
-                _logger.debug("New Event: {0}".format(repr(e)))
-                self.newEvent.emit(e)
-            time.sleep(resources.EVENT_RESPONSE_TIME)
+        """
+        try:
+            self.logger.info("Starting event watcher")
+            self.__state = "running"
+            while self.__state == "running":
+                # If the next call raises an exception, do I really want to go on?
+                events = self.fn()
+                for e in events:
+                    self.logger.debug("New Event: {0}".format(repr(e)))
+                    self.newEvent.emit(e)
+                time.sleep(0.1)
+        except:
+            pass
         # Done with the loop
         self.__state = "stopped"
 
     def quit(self):
-        '''
-        Ends the cycle of polling the debugger for events.
-        '''
-        _logger.info("Stopping event watcher")
+        """Ends the cycle of polling the debugger for events."""
+        self.logger.info("Stopping event watcher")
         self.__state = "stopping"

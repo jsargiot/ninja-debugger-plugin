@@ -1,3 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-from Debugger import Debugger
+from __future__ import absolute_import
+
+from debugger_plugin.Debugger import DebugPlugin
