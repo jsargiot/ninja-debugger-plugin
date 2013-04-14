@@ -36,6 +36,7 @@ class DebugMessageFactory:
     MSG_THREAD_STARTED = 0x02
     MSG_THREAD_SUSPENDED = 0x03
     MSG_THREAD_ENDED = 0x04
+    MSG_THREAD_RESUMED = 0x05
 
     def __init__(self):
         self.logger = logging.getLogger(__name__)
@@ -54,6 +55,18 @@ class DebugMessageFactory:
         """
         return {
                 'type': DebugMessageFactory.MSG_THREAD_STARTED,
+                'id': thread_id,
+                'name': thread_name
+               }
+    
+    @staticmethod
+    def make_thread_resumed(thread_id, thread_name):
+        """
+        Return a message with information about the thread that started its
+        execution.
+        """
+        return {
+                'type': DebugMessageFactory.MSG_THREAD_RESUMED,
                 'id': thread_id,
                 'name': thread_name
                }
@@ -210,30 +223,34 @@ class Ndb3Thread:
         self._state = STATE_TERMINATED
         self._debugger = None
 
+    def _continue(self, command, stop):
+        """
+        Continue execution with the specified command.
+        """
+        self._f_stop = stop
+        self._f_cmd = command
+        self._state = STATE_RUNNING
+        
+        msg = DebugMessageFactory.make_thread_resumed(self._id, self._name)
+        self._debugger.put_message(msg)
+        
+        return self._state
+    
     def resume(self):
         """Make this thread resume execution after a stop."""
-        self._f_stop = None
-        self._f_cmd = Ndb3Thread.CMD_RUN
-        self._state = STATE_RUNNING
-        return self._state
+        return self._continue(Ndb3Thread.CMD_RUN, None)
 
     def step_over(self):
         """Stop on the next line in the current frame."""
-        self._f_stop = self._f_current
-        self._f_cmd = Ndb3Thread.CMD_STEP_OVER
-        self._state = STATE_RUNNING
+        return self._continue(Ndb3Thread.CMD_STEP_OVER, self._f_current)
 
     def step_into(self):
         """Stop execution at the next line of code."""
-        self._f_stop = None
-        self._f_cmd = Ndb3Thread.CMD_STEP_INTO
-        self._state = STATE_RUNNING
+        return self._continue(Ndb3Thread.CMD_STEP_INTO, None)
 
     def step_out(self):
         """Stop execution after the return of the current frame."""
-        self._f_stop = self._f_current
-        self._f_cmd = Ndb3Thread.CMD_STEP_OUT
-        self._state = STATE_RUNNING
+        return self._continue(Ndb3Thread.CMD_STEP_OUT, self._f_current)
 
     def get_stack(self):
         """
