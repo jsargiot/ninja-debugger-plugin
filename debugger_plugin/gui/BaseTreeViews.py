@@ -31,7 +31,7 @@ class BaseTreeView(QTreeWidget):
         self._content_provider = None
         self._label_providers = {}
         # index table to lookup treeview items associated with model objects.
-        self._index_table = []
+        self.__indextable = []
         self._hide_parent = hide_parent_element
     
     def setContentProvider(self, provider):
@@ -49,122 +49,99 @@ class BaseTreeView(QTreeWidget):
     def setInput(self, input):
         """Set the input object for this view."""
         self._input = input
-        
-        if isinstance(input, list):
-            for i in input:
-                self._addItem(self, i)
-        else:
-            self._addItem(self, input)
+        self.update()
     
-    def _newItem(self, parent, object):
+    def __newItem(self, parent, data):
         """
         Return a new item to insert in the tree.
         Each derived class should override this method to return the proper
-        object.
+        TreeViewItem.
         """
-        b = BaseTreeViewItem(parent)
-        b.data = object
-        return b
+        item = BaseTreeViewItem(parent)
+        item.data = data
+        self.__indextable.append(item)
+        return item
     
-    def _addItem(self, parent_item, object, expanded = False):
+    def __addItem(self, parent_item, data, expanded = False):
         """
         Add a new item to the tree with under the specifed parent. Also add
-        all children of object.
+        all children of data.
         """
-        root = self.findObjectsItem(object)
-        if not root:
-            root = self._newItem(parent_item, object)
-            self._index_table.append(root)
+        item = self.findObjectsItem(data)
+        if not item:
+            item = self.__newItem(parent_item, data)
+        
         # Update its content
-        self.update(object)
+        self.update(data)
+        
         # Expand item
-        self.setItemExpanded(root, expanded)
-        return root
+        self.setItemExpanded(item, expanded)
+        
+        return item
 
-    def _removeItem(self, item):
-        """Removes the treeviewitem and all of its children from the tree."""
+    def __removeItem(self, item):
+        """Remove the treeviewitem and all of its children from the tree."""
         parent = item.parent()
         if parent:
             root = parent.removeChild(item)
         else:
             root = self.invisibleRootItem()
             root.removeChild(item)
-        self._index_table.remove(item)
+        self.__indextable.remove(item)
     
-    def _updateItem(self, item, object):
-        """Updates the treeviewitem with the data from the object model."""
+    def __updateItem(self, item, data):
+        """Update the treeviewitem with the data from the data model."""
         # Set text for item
         for column in xrange(self.columnCount()):
-            name = str(object)
+            name = str(data)
             item.setIcon(column, QIcon())
             
             if column in self._label_providers:
-                name = self._label_providers[column].getText(object)
-                icon = self._label_providers[column].getImage(object)
+                name = self._label_providers[column].getText(data)
+                icon = self._label_providers[column].getImage(data)
                 if icon:
                     item.setIcon(column, QIcon(icon))
             item.setText(column, name)
 
         # Remove old data associated with this item
-        if item.data != object:
-            # remove old object
+        if item.data != data:
+            # remove old data
             del item.data
-            item.data = object
+            item.data = data
     
-    def findObjectsItem(self, obj):
-        """Return the BaseTreeViewItem that represents the object."""
-        for item in self._index_table:
-            if item.data == obj:
+    def findObjectsItem(self, data):
+        """Return the BaseTreeViewItem that represents the data."""
+        for item in self.__indextable:
+            if item.data == data:
                 return item
         return None
-    
-    def refresh(self, object = None):
-        """
-        Refresh the content of object in the view, or everything if object
-        is None. Only updates the content of the item, not its structure (add
-        or remove childs).
-        """
-        if object is None:
-            object = self._input
-        item = self.findObjectsItem(object)
-        if item:
-            self._updateItem(item, object)
 
-    def update(self, obj = None, expand = False):
+    def update(self, data = None, expand = False):
         """
         Update the specified element in the tree, including the number of
         children. This method, unlike refresh, deals with structural changes.
         """
-        if obj is None:
+        if data is None or data == self._input:
             # Remove the top parent
-            obj = self._input
-        
-        if isinstance(obj, list):
-            tli = self.topLevelItem(0)
-            if tli:
-                children_c = tli.takeChildren()
-            else:
-                tli = self
-            for i in obj:
-                self._addItem(tli, i, expand)
+            data = self._input
+            item = self.invisibleRootItem()
         else:
-            # Take the item that represents the object
-            item = self.findObjectsItem(obj)
-            if item:
-                isExpanded = self.isItemExpanded(item)
-                # First, refresh the object itself
-                self._updateItem(item, obj)
-                # Get the list of children
-                children = self._content_provider.getChildren(obj)
-                # Remove old ones
-                children_c = item.takeChildren()
-                for child in children_c:
-                    if not child.data in children:
-                        # Remove child since its not in the new children set
-                        self._removeItem(child)
-                    else:
-                        # Re-added since we took al children.
-                        item.addChild(child)
-                # Add the rest of the children
-                for child in children:
-                    self._addItem(item, child, expand)
+            item = self.findObjectsItem(data)
+            self.__updateItem(item, data)
+        
+        children = self._content_provider.getChildren(data)
+        
+        # Remove old ones
+        currents = item.takeChildren()
+        for child in currents:
+            if not child.data in children:
+                # Remove child since its not in the new children set
+                item.removeChild(child)
+            else:
+                # Re-added since we took al children.
+                item.addChild(child)
+        
+        # Add the rest of the children (__addItem won't add those that are
+        # already added).
+        for child in children:
+            self.__addItem(item, child, expand)

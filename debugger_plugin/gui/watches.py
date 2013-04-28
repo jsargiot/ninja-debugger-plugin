@@ -72,6 +72,7 @@ class WatchesWidget(QWidget):
         btn_add = QPushButton("Add Watch", self)
         self.connect(btn_add, SIGNAL("clicked()"), self.add_watch)
         
+        vbox.setContentsMargins(0,0,0,0)
         vbox.addWidget(self.view)
         vbox.addSpacerItem(QSpacerItem(1, 0, QSizePolicy.Expanding))
         vbox.addWidget(btn_add)
@@ -89,16 +90,17 @@ class WatchesWidget(QWidget):
     
     def __item_changed(self, item, column):
         """Emits the signal that receives from the QTreeWidget."""
-        print "__item_changed"
         item_text = str(item.text(0))
         item_value = str(item.text(2))
-        
-        # Get model
         watch = item.data
-        watch.expression = item_text
-        watch.value = item_value
         
-        self.itemChanged.emit(watch)
+        if not item_text:
+            self.model.remove(watch)
+            watch = self.model
+        else:
+            watch.expression = item_text
+            watch.value = item_value
+            self.itemChanged.emit(watch)
         
         try:
             self.view.blockSignals(True)
@@ -112,18 +114,18 @@ class WatchesWidget(QWidget):
         (column = 1) or the value (column = 2). The appearance of the edit
         box depends on the OS and theme.
         '''
+        data = item.data
         return True
         
     def get_model(self):
         return self.model
     
     def add_watch(self):
-        print "add_watch"
         try:
             self.view.blockSignals(True)
             f3 = debugger_plugin.core.models.WatchModel('<New watch>', '', '')
             self.model.append(f3)
-            self.view.update(self.model, expand=True)
+            self.view.update(expand=True)
             
             # Get the corresponding item in the view and make it modify
             item = self.view.findObjectsItem(f3)

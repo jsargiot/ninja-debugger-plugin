@@ -11,6 +11,7 @@ import logging
 import ninja_ide.gui
 import ninja_ide.core.plugin
 import ninja_ide.core.settings
+import ninja_ide.gui.main_panel.main_container
 
 from PyQt4.QtCore import SIGNAL
 from PyQt4.QtCore import Qt
@@ -20,11 +21,16 @@ from PyQt4.QtCore import QProcess
 from PyQt4.QtCore import QThread
 from PyQt4.QtGui import QIcon
 from PyQt4.QtGui import QMenu
+from PyQt4.QtGui import QWidget
 from PyQt4.QtGui import QAction
 from PyQt4.QtGui import QToolTip
 from PyQt4.QtGui import QTabWidget
 from PyQt4.QtGui import QMessageBox
 from PyQt4.QtGui import QTextBlockFormat
+from PyQt4.QtGui import QVBoxLayout
+from PyQt4.QtGui import QHBoxLayout
+from PyQt4.QtGui import QSpacerItem
+from PyQt4.QtGui import QSizePolicy
 
 import debugger_plugin.core.models
 import debugger_plugin.gui.resources
@@ -32,7 +38,7 @@ import debugger_plugin.gui.threads
 import debugger_plugin.gui.watches
 import debugger_plugin.gui.providers
 
-import ndb3.rpc_adapter
+import ndb3.rpc
 
 
 class DebugPlugin(ninja_ide.core.plugin.Plugin):
@@ -59,7 +65,7 @@ class DebugPlugin(ninja_ide.core.plugin.Plugin):
         
         # Debug attributes
         self.debugger_script = os.path.join(self.path, "ndb3", "ndb3.py")
-        self.debugger_adapter = ndb3.rpc_adapter.RPCDebuggerAdapterClient()
+        self.debugger_adapter = ndb3.rpc.RPCDebuggerAdapterClient()
         
         # Breakpoints
         self._breakpoints = {}
@@ -73,7 +79,7 @@ class DebugPlugin(ninja_ide.core.plugin.Plugin):
     def finish(self):
         """Shuts down the plugin and the debugger client."""
         # Stop debugger if it's running.
-        self.debugger_adapter.stop()
+        self.debug_stop()
 
     #
     # Actions
@@ -84,23 +90,20 @@ class DebugPlugin(ninja_ide.core.plugin.Plugin):
         Start the debugging session. The specified function launches the
         debugging script.
         """
-        try:
-            # Check that there is no other instance running
-            if self.debugger_adapter.connect(retries=1):
-                # Kill previous session
-                self.debugger_adapter.stop()
-        except:
-            pass
-        
         self.logger.info("Session start.")
         # Activate the UI elements (watches widget, threads, etc)
         self._activate_ui()
         try:
+            # Add environment variable to be able to debug django projects
+            os.environ['RUN_MAIN'] = 'true'
             # Set execution options for this session.
             exec_opts = ninja_ide.core.settings.EXECUTION_OPTIONS
             ninja_ide.core.settings.EXECUTION_OPTIONS = "{0}".format(self.debugger_script)
+            # Before start kill all executions
+            self.ide.actions.kill_execution()
             # Run project
             fn_run()
+            self._activate_debug_actions(True)
             # Wait for the debugger to start
             time.sleep(1)
             if self.debugger_adapter.connect(retries=3):
@@ -115,9 +118,6 @@ class DebugPlugin(ninja_ide.core.plugin.Plugin):
                         # at one(1).
                         self.logger.debug("Breakpoint {0}:{1}".format(b, l))
                         self.debugger_adapter.set_breakpoint(b, l + 1)
-                
-                # Activate buttons
-                self._activate_debug_actions(True)
                 
                 # Start event monitor
                 self.monitor = EventWatcher(self.debugger_adapter.get_messages)
@@ -144,10 +144,12 @@ class DebugPlugin(ninja_ide.core.plugin.Plugin):
         """
         """
         # Check if the file we're getting is on the editor
-        if os.path.isfile(file):
-            # It's a file, let's open it
-            self.editor.open_file(file)
-        # TODO: Get tab with the filename
+        if not os.path.isfile(file):
+            return
+        
+        # Open file (snippet taken from tree_projects_widget.py)
+        ninja_ide.gui.main_panel.main_container.MainContainer().open_file(file)
+        
         if line > 0:
             editor = self.editor.get_editor()
             editor.jump_to_line(line - 1)
@@ -212,7 +214,6 @@ class DebugPlugin(ninja_ide.core.plugin.Plugin):
         self.threadsView.setLabelProvider(debugger_plugin.gui.providers.ThreadsLabelProvider())
         self.threadsView.setInput(self.threads_model)
         
-        #self.connect(self.threadsView, SIGNAL("itemClicked(QTreeWidgetItem*, int)"), self.select_thread)
         self.connect(self.threadsView, SIGNAL("itemSelectionChanged()"), self.select_thread)
         
         # Expand top level item
@@ -227,9 +228,15 @@ class DebugPlugin(ninja_ide.core.plugin.Plugin):
         self._old_active_widget_widget = self.explorer._explorer.currentWidget()
         
         # Configure tabs in explorer
-        self.tabWidget = QTabWidget()
-        self.tabWidget.addTab(self.threadsView, "Threads")
-        self.tabWidget.addTab(self.watchesWidget, "Watches")
+        self.tabWidget = QWidget()
+        vbox = QVBoxLayout(self.tabWidget)
+        
+        vbox.addWidget(self.threadsView)
+        vbox.addSpacerItem(QSpacerItem(1, 0, QSizePolicy.Expanding))
+        vbox.addWidget(self.watchesWidget)
+        
+        #self.tabWidget.addTab(self.threadsView, "Threads")
+        #self.tabWidget.addTab(self.watchesWidget, "Watches")
         self.explorer.add_tab(self.tabWidget, "Debug")
         self.explorer._explorer.setCurrentWidget(self.tabWidget)
     
@@ -320,16 +327,14 @@ class DebugPlugin(ninja_ide.core.plugin.Plugin):
         print repr(event)
         self.logger.debug("Processing event: ({0})".format(repr(event)))
 
-        # MSG_THREAD_STARTED = 0x02
-        if event['type'] == 2:
+        if event['type'] == 'THREAD_CREATE':
             # New thread
             tid = event['id']
             item = debugger_plugin.core.models.ThreadModel(tid, event['name'], debugger_plugin.core.models.ThreadModel.RUNNING)
             self.threads_model.add(tid, item)
-            self.threadsView.update(self.threads_model, True)
+            self.threadsView.update(expand=True)
         
-        # MSG_THREAD_SUSPENDED = 0x03
-        if event['type'] == 3:
+        if event['type'] == 'THREAD_PAUSE':
             tid = event['id']
             tfile = event['file']
             tline = event['line']
@@ -341,21 +346,28 @@ class DebugPlugin(ninja_ide.core.plugin.Plugin):
             # Update threads
             self.select_thread()
         
-        # MSG_THREAD_ENDED = 0x04
-        if event['type'] == 4:
+        if event['type'] == 'THREAD_STOP':
             # Thread died
             tid = event['id']
             if self.threads_model.get(tid):
                 self.threads_model.remove(tid)
-            self.threadsView.update(self.threads_model, True)
+            self.threadsView.update(expand=True)
 
-        # MSG_THREAD_RESUMED = 0x05
-        if event['type'] == 5:
+        if event['type'] == 'THREAD_RESUME':
             # Thread resumed
             tid = event['id']
-            t = self.threads_model.get(tid)
-            t.state = debugger_plugin.core.models.ThreadModel.RUNNING
-            self.threadsView.update(t, True)
+            tobj = self.threads_model.get(tid)
+            tobj.state = debugger_plugin.core.models.ThreadModel.RUNNING
+            self.threadsView.update(tobj, True)
+        
+        #if event['type'] == 'DEBUG_START':
+        #    pass
+        
+        if event['type'] == 'DEBUG_END':
+            self.debugger_adapter.stop()
+            # Wait half second before kill the process
+            time.sleep(0.5)
+            self.debug_stop()
     
     #
     # Threads management
@@ -384,19 +396,16 @@ class DebugPlugin(ninja_ide.core.plugin.Plugin):
         # resume only that thread.
         thread_id = self.get_active_thread()
         
+        # Resume just the selected thread. If thread_id is None, then all
+        # threads are resumed.
         if thread_id:
-            # Resume just the selected thread
             self.debugger_adapter.resume(thread_id)
         else:
-            # If no thread selected, resume all
             self.debugger_adapter.resume_all()
 
     def debug_stop(self):
         """Stops the debugger and ends the debugging session."""
-        try:
-            self.debugger_adapter.stop()
-        except ndb3.rpc_adapter.DebuggerConnectionError:
-            pass
+        self.ide.actions.kill_execution()
         self._activate_debug_actions(False)
         self._deactivate_ui()
 
