@@ -25,13 +25,13 @@ class RPCDebuggerAdapter(threading.Thread, SimpleXMLRPCServer):
     """
     api_version = "0.2"
 
-    def __init__(self, debugger):
+    def __init__(self, debugger, port=8765):
         """
         Create a new RPCDebuggerAdapter instance. Allow external users
         to interact with the debugger through XML-RPC.
         """
-        threading.Thread.__init__(self, name="RPCDebuggerAdapter")
-        SimpleXMLRPCServer.__init__(self, ("", 8765),
+        threading.Thread.__init__(self, name=str(self.__class__))
+        SimpleXMLRPCServer.__init__(self, ("", port),
                                     logRequests=False,
                                     allow_none=True)
 
@@ -75,90 +75,89 @@ class RPCDebuggerAdapter(threading.Thread, SimpleXMLRPCServer):
         self._debugger.stop()
         return "OK"
 
-    def export_resume(self, t_id):
+    def export_resume(self, tid = None):
         """
         Resume execution of the specified thread. Stop execution only at
         breakpoints. Return the id of the thread resumed.
         """
-        thread = self._debugger.get_thread(t_id)
-        thread.resume()
-        return str(t_id)
+        response = []
+        if tid:
+            t = self._debugger.get_thread(tid)
+            t.resume()
+            response.append(tid)
+        else:
+            for i in self._debugger.get_threads():
+                i.resume()
+                response.append(i.id)
+        return response
 
-    def export_resume_all(self):
-        """Resume execution of all threads."""
-        self._debugger.resume()
-        return 'OK'
-
-    def export_step_over(self, t_id):
+    def export_step_over(self, tid):
         """
         Resume execution of the specified thread, but stop at the next
         line in the current frame of execution.
         """
-        thread = self._debugger.get_thread(t_id)
+        thread = self._debugger.get_thread(tid)
         thread.step_over()
-        return str(t_id)
+        return str(tid)
 
-    def export_step_into(self, t_id):
+    def export_step_into(self, tid):
         """
         Resume execution of the specified thread, but stop at the very next
         line of code, in or within the current frame.
         """
-        thread = self._debugger.get_thread(t_id)
+        thread = self._debugger.get_thread(tid)
         thread.step_into()
-        return str(t_id)
+        return str(tid)
 
-    def export_step_out(self, t_id):
+    def export_step_out(self, tid):
         """
         Resume execution of the specified thread, but stop after the return of
         the current frame.
         """
-        thread = self._debugger.get_thread(t_id)
+        thread = self._debugger.get_thread(tid)
         thread.step_out()
-        return str(t_id)
+        return str(tid)
 
-    def export_get_stack(self, t_id):
+    def export_get_stack(self, tid):
         """Return the stack trace of the specified thread."""
-        t_obj = self._debugger.get_thread(t_id)
+        t_obj = self._debugger.get_thread(tid)
         return t_obj.get_stack()
 
     def export_set_breakpoint(self, filename, line):
         """Set the specified line in filename as a breakpoint."""
-        self._debugger.set_breakpoint(filename, line)
+        self._debugger.breakpoint_manager.add(filename, line)
         return (filename, line)
-    
+
     def export_clear_breakpoints(self, filename = None):
         """Clear breakpoints for a specified filename."""
-        self._debugger.clear_breakpoints(filename)
-        return "OK"
+        self._debugger.breakpoint_manager.remove(filename)
+        return []
 
-    def export_evaluate(self, t_id, e_str, depth = 1):
+    def export_evaluate(self, tid, e_str, depth = 1):
         """
         Evaluate e_str in the context of the globals and locals from
         the execution frame in the specified thread.
         """
-        t_obj = self._debugger.get_thread(t_id)
+        t_obj = self._debugger.get_thread(tid)
         result = t_obj.evaluate(e_str)
         return serialize.serialize(e_str, e_str, result, depth=depth)
 
-    def export_execute(self, t_id, e_str):
+    def export_execute(self, tid, e_str):
         """
         Executes e_str in the context of the globals and locals from the
         execution frame in the specified thread.
         """
-        t_obj = self._debugger.get_thread(t_id)
+        t_obj = self._debugger.get_thread(tid)
         result = t_obj.execute(e_str)
         return serialize.serialize(e_str, e_str, result)
 
     def export_list_threads(self):
         """List the running threads."""
         t_list = []
-        for t_id in self._debugger.get_threads():
-            t_obj = self._debugger.get_thread(t_id)
-            t_name = t_obj.name()
-            t_state = t_obj.state()
-            t_list.insert(0, (t_id, t_name, t_state))
+        for t in self._debugger.get_threads():
+            t_list.insert(0, (t.id, t.name, t.state))
         return t_list
-    
+
     def export_get_messages(self):
         """Retrieve the list of unread messages of the debugger."""
         return self._debugger.get_messages()
@@ -171,7 +170,7 @@ class RPCDebuggerAdapterClient:
 
     A RPCDebuggerAdapterClient object is used to control a RPCDebuggerAdapter
     thru RPC calls over the network.
-    
+
     By default, the client will try to connect to localhost.
 
        +-------------+               +------------+          +--------+
@@ -216,7 +215,7 @@ class RPCDebuggerAdapterClient:
                 return True
             retries = retries - 1
         return False
-    
+
     def disconnect(self):
         """
         Disconnect from the remote end. Always return True
@@ -237,81 +236,80 @@ class RPCDebuggerAdapterClient:
         except Exception:
             pass
         return False
-    
+
     def start(self):
         """Start remote debugger execution of code."""
         return self.__safe_call(self.remote.start)
-    
+
     def stop(self):
         """Stop debugger session and exit current execution."""
         return self.__safe_call(self.remote.stop)
-    
+
     def resume(self, t_id):
         """Resume the execution of the specified debug thread."""
         return self.__safe_call(self.remote.resume, t_id)
-    
+
     def resume_all(self):
         """Resume the execution of all debug threads."""
-        return self.__safe_call(self.remote.resume_all)
-        
+        return self.__safe_call(self.remote.resume)
+
     def step_over(self, t_id):
         """
         Stop execution of the specified debug thread on the next line of the
         same file or the parent context.
         """
         return self.__safe_call(self.remote.step_over, t_id)
-        
+
     def step_into(self, t_id):
         """
         Stop execution of the specifed debug thread in the next instruction.
         """
         return self.__safe_call(self.remote.step_into, t_id)
-        
+
     def step_out(self, t_id):
         """
         Resume execution of the specified debug thread until a return statement
         (implicit or explicit) is found.
         """
         return self.__safe_call(self.remote.step_out, t_id)
-    
+
     def get_stack(self, t_id):
         """Return the list of files in the stack for the specifed thread."""
         return self.__safe_call(self.remote.get_stack, t_id)
-    
+
     def set_breakpoint(self, filename, line):
         """Set a breakpoint in the specifed file and line."""
         return self.__safe_call(self.remote.set_breakpoint, filename, line)
-    
+
     def clear_breakpoints(self, filename = None):
         """Clear all breakpoints for a specified filename."""
         return self.__safe_call(self.remote.clear_breakpoints, filename)
-        
+
     def evaluate(self, t_id, e_str, depth = 1):
         """
         Evaluate the expression within the context of the specified debug
         thread. Since eval only evaluates expressions, a call to this method
         with an assignment will fail.
-        
+
         For a deep understanding of the inner working of this method, see:
         http://docs.python.org/2/library/functions.html#eval.
         """
         return self.__safe_call(self.remote.evaluate, t_id, e_str, depth)
-    
+
     def execute(self, t_id, e_str):
         """
         Execute an expression within the context of the specified debug thread.
-        
+
         For a deep understanding of the inner working of this method, see:
         http://docs.python.org/2/reference/simple_stmts.html#exec.
         """
         return self.__safe_call(self.remote.execute, t_id, e_str)
-        
+
     def list_threads(self):
         """Return the list of active threads on the remote debugger."""
         return self.__safe_call(self.remote.list_threads)
-    
+
     def get_messages(self):
         """Return the list of available messages on the remote debugger."""
         return self.__safe_call(self.remote.get_messages)
-    
-    
+

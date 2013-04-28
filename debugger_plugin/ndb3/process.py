@@ -1,51 +1,39 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 *-*
 """
-    This module encapsulates the OS specific mechanisms for controlling and
-    inspecting a running process.
+The process module contains the functions to execute code from either a
+string or a file.
 """
-
-import __builtin__
 import sys
 
+def runsource(source, glob=None, loc=None, filename="<string>"):
+        """Run the source code using glob as globals and loc as locals."""
+        _code = source
 
-class CodeExecutor:
-    """
-    CodeExecutor object allows to run arbitrary code from any
-    file directly in the current execution.
-    """
-
-    def __init__(self, filename = None, string = None):
-        """Create a new CodeExecutor for the specified filename."""
-        self._name = "<string>"
-        self._code = 'pass'
-        if filename:
-            # Read source from file
-            with open(filename, 'r') as fd:
-                self._code = fd.read() + "\n"
-                self._name = filename
-        elif string:
-            self._code = string
-
-    def run(self, glob = None, loc = None):
-        """
-        Run the code using globals and locals. If no load_file or load_string
-        calls were made, a "pass" is executed.
-        """
         # Define basic globals if they were not specified
         if glob is None:
+            import __builtin__
             glob = {
                 '__name__': '__main__',
-                '__doc__': None,
-                '__file__': self._name,
                 '__builtins__': __builtin__,
             }
+
         # If not locals were specified, use globals
         if loc is None:
             loc = glob
+
         # Compile and execute code
-        c_code = compile(source=self._code, filename=self._name, mode='exec')
+        c_code = compile(source=_code, filename=filename, mode='exec')
         exec c_code in glob, loc
+
+def runfile(filename, glob=None, loc=None):
+        """Run the code in filename using glob as globals and loc as locals."""
+        _code = "pass"
+        # Load source code from file
+        with open(filename, 'r') as fp:
+            _code = fp.read() + "\n"
+
+        runsource(_code, glob, loc, filename=filename)
 
 
 if __name__ == "__main__":
@@ -55,4 +43,4 @@ if __name__ == "__main__":
         raise SystemExit
 
     # Run code
-    CodeExecutor(sys.argv[1]).run()
+    runfile(sys.argv[1])
