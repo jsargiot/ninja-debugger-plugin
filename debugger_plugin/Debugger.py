@@ -130,6 +130,7 @@ class DebugPlugin(ninja_ide.core.plugin.Plugin):
                 QMessageBox.information(self.editor.get_editor(),
                      "Error when starting debugger",
                      "The debugger could not be started")
+                self.debug_stop()
         finally:
             # Restore execution options
             ninja_ide.core.settings.EXECUTION_OPTIONS = exec_opts
