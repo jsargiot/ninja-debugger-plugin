@@ -56,7 +56,6 @@ class DebugPlugin(ninja_ide.core.plugin.Plugin):
         self.logger.info("Initializing plugin.")
         
         # Basic services
-        self.ide = ninja_ide.gui.ide.IDE()
         self.editor = self.locator.get_service('editor')
         self.toolbar = self.locator.get_service('toolbar')
         self.menuApp = self.locator.get_service('menuApp')
@@ -92,6 +91,7 @@ class DebugPlugin(ninja_ide.core.plugin.Plugin):
         """
         self.logger.info("Session start.")
         # Activate the UI elements (watches widget, threads, etc)
+        self.ide = ninja_ide.gui.ide.IDE()
         self._activate_ui()
         try:
             # Add environment variable to be able to debug django projects
