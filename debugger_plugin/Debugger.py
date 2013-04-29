@@ -53,8 +53,11 @@ class DebugPlugin(ninja_ide.core.plugin.Plugin):
         """
         DebugPlugin.instance = self
         
+        # Fix some incompatibilities with version 2.0
         if not hasattr(self, 'logger'):
             self.logger = logging.getLogger(__name__)
+        if not hasattr(self, 'path'):
+            self.path = os.path.dirname(__file__)
         
         self.logger.info("Initializing plugin.")
         
