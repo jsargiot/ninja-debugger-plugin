@@ -53,6 +53,9 @@ class DebugPlugin(ninja_ide.core.plugin.Plugin):
         """
         DebugPlugin.instance = self
         
+        if not hasattr(self, 'logger'):
+            self.logger = logging.getLogger(__name__)
+        
         self.logger.info("Initializing plugin.")
         
         # Basic services
