@@ -133,9 +133,6 @@ class DebugPlugin(ninja_ide.core.plugin.Plugin):
 
                 # Start debugger
                 self.debugger_adapter.start()
-                
-                # Install mouse handler
-                self.__install_mouse_handler
             else:
                 QMessageBox.information(self.editor.get_editor(),
                      "Error when starting debugger",
@@ -253,6 +250,7 @@ class DebugPlugin(ninja_ide.core.plugin.Plugin):
         self.explorer.add_tab(self.tabWidget, "Debug")
         self.explorer._explorer.setCurrentWidget(self.tabWidget)
         
+        # Install mouse handler
         self.__install_mouse_handler()
     
     def _deactivate_ui(self):
