@@ -33,6 +33,7 @@ from PyQt4.QtGui import QSpacerItem
 from PyQt4.QtGui import QSizePolicy
 
 import debugger_plugin.core.models
+import debugger_plugin.core.symbols
 import debugger_plugin.gui.resources
 import debugger_plugin.gui.threads
 import debugger_plugin.gui.watches
@@ -132,6 +133,9 @@ class DebugPlugin(ninja_ide.core.plugin.Plugin):
 
                 # Start debugger
                 self.debugger_adapter.start()
+                
+                # Install mouse handler
+                self.__install_mouse_handler
             else:
                 QMessageBox.information(self.editor.get_editor(),
                      "Error when starting debugger",
@@ -248,9 +252,13 @@ class DebugPlugin(ninja_ide.core.plugin.Plugin):
         #self.tabWidget.addTab(self.watchesWidget, "Watches")
         self.explorer.add_tab(self.tabWidget, "Debug")
         self.explorer._explorer.setCurrentWidget(self.tabWidget)
+        
+        self.__install_mouse_handler()
     
     def _deactivate_ui(self):
         """Remove all the debugging ui elements from the editor."""
+        # Remove mouse move handler
+        self.__uninstall_mouse_handler()
         # Restore active widget on explorer container
         self.explorer._explorer.setCurrentWidget(self._old_active_widget_widget)
         # Remove threads container
@@ -326,7 +334,65 @@ class DebugPlugin(ninja_ide.core.plugin.Plugin):
         
         # Start disabled
         self._activate_debug_actions(False)
+    
+    def __install_mouse_handler(self):
+        """
+        Installs a new mouse event handler for the ninja-ide. The new handler
+        observates the position and evaluates any symbol under the mouse cursor
+        and show its value. Doesn't remove old behavior, it just execute it
+        after the custom handler is done.
+        """
+        editor_widget = self.editor.get_editor()
+        self.sym_finder = dict()
+
+        # Save old mouse event
+        self.__old_mouse_event = editor_widget.mouseMoveEvent
         
+        # New custom mouse handler
+        def custom_mouse_movement(event):
+            try:
+                # If no thread is selected, just ignore the move
+                thread_id = self.get_active_thread()
+                if not thread_id:
+                    return
+                
+                pos = event.pos()
+                c = editor_widget.cursorForPosition(pos)
+                
+                filepath = os.path.abspath(self.editor.get_editor_path())
+                if filepath not in self.sym_finder:
+                    finder = debugger_plugin.core.symbols.SymbolFinder(open(filepath).read())
+                    finder.parse()
+                    self.sym_finder[filepath] = finder
+                else:
+                    finder = self.sym_finder[filepath]
+                
+                sym = finder.get(c.blockNumber()+1, c.columnNumber())
+                if sym is not None:
+                    ret = self.debugger_adapter.evaluate(thread_id,
+                                                         sym.expression,
+                                                         depth=0)
+                    
+                    content = "{exp} = ({type}) {value}".format(
+                                    exp=sym.expression, type=ret['type'],
+                                    value=ret['value'])
+                    QToolTip.showText(editor_widget.mapToGlobal(pos), content)
+                
+                
+            finally:
+                self.__old_mouse_event(event)
+        # Install new event handler
+        editor_widget.mouseMoveEvent = custom_mouse_movement
+        
+        print editor_widget.mouseMoveEvent
+
+    def __uninstall_mouse_handler(self):
+        """
+        Removes the custom mouse event handler from the ninja-ide. Restores
+        the mouse event handler to its previous state.
+        """
+        self.editor.get_editor().mouseMoveEvent = self.__old_mouse_event
+    
     #
     # Events management
     #
