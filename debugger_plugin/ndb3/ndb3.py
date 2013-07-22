@@ -37,6 +37,8 @@ class Ndb3(object):
         self.breakpoint_manager = breakpoints.BreakpointManager()
         self._stop = True
         self.channel = None
+        # Translation table from normalized ids to real ids.
+        self.norm_ids = dict()
 
     def listen(self, port):
         """
@@ -127,9 +129,12 @@ class Ndb3(object):
 
         # Thread was already decorated?
         if not hasattr(t, 'ndb_info'):
-            t.ndb_info = threads.NdbThread(t.ident, t.name, frame,
+            #  Normalize id to string to avoid issue #5
+            norm_tid = str(t.ident)
+            t.ndb_info = threads.NdbThread(norm_tid, t.name, frame,
                                           debugger=self,
                                           events_handler=self._on_thread_event)
+            self.norm_ids[norm_tid] = t.ident
 
         # Return the trace function for this new scope
         return t.ndb_info.trace_dispatch(frame, event, arg)
@@ -150,7 +155,8 @@ class Ndb3(object):
 
     def get_thread(self, t_id):
         """Return the NdbThread with id=t_id, None if it doesn't exists."""
-        t = threading._active.get(t_id, None)
+        real_tid = self.norm_ids.get(t_id)
+        t = threading._active.get(real_tid, None)
         info = None
         if hasattr(t, 'ndb_info') and t.ndb_info.state != None:
             info = t.ndb_info
@@ -161,9 +167,9 @@ class Ndb3(object):
         Return all active NdbThreads. Returns an object that generates the
         list of threads.
         """
-        for i in threading._active:
-            t = threading._active[i]
-            if hasattr(t, 'ndb_info') and t.ndb_info.state != None:
+        for i in self.norm_ids:
+            t = self.get_thread(i)
+            if t:
                 yield t.ndb_info
 
     def get_messages(self):
