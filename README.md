@@ -3,9 +3,13 @@ ninja-debugger-plugin
 
 Ninja-IDE debugger plugin
 
-Current version: 0.4 beta
+Current version: 0.4.1 beta
 
 What's new?
+
+- 0.4.1 beta
+
+    * Fixed issue #5.
 
 - 0.4 beta
 
