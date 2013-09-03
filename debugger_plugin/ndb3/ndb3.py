@@ -170,7 +170,7 @@ class Ndb3(object):
         for i in self.norm_ids:
             t = self.get_thread(i)
             if t:
-                yield t.ndb_info
+                yield t
 
     def get_messages(self):
         """
