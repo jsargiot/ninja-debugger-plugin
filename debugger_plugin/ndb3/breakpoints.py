@@ -31,6 +31,7 @@ class BreakpointManager(object):
         specified, clear all breakpoints.
         """
         if filename:
+            filename = os.path.abspath(filename)
             try:
                 del self.breakpoints[filename]
             except:
