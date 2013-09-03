@@ -3,9 +3,14 @@ ninja-debugger-plugin
 
 Ninja-IDE debugger plugin
 
-Current version: 0.4.1 beta
+Current version: 0.4.2 beta
 
 What's new?
+
+- 0.4.2 beta
+
+    * Fixed issue #7 Cannot continue when no thread is selected.
+    * Fixed issue #8 Cannot remove breakpoints with relative paths.
 
 - 0.4.1 beta
 
